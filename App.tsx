@@ -94,7 +94,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
+      providerInfo: auth.currentUser?.providerData.map((provider: any) => ({
         providerId: provider.providerId,
         displayName: provider.displayName,
         email: provider.email,
@@ -454,7 +454,7 @@ const App: React.FC = () => {
                 MediSim <span className="text-emerald-500 not-italic">ER</span>
               </h1>
               <p className="text-slate-500 text-lg md:text-xl font-medium max-w-2xl mx-auto tracking-tight">
-                High-fidelity bedside simulation powered by <span className="text-white">Gemini 3.1 Pro</span>. Master clinical reasoning through evidence-based scenarios.
+                High-fidelity bedside simulation powered by <span className="text-white">Claude</span>. Master clinical reasoning through evidence-based scenarios.
               </p>
             </div>
 
@@ -665,7 +665,7 @@ const App: React.FC = () => {
               <h1 className="text-lg font-black tracking-tighter uppercase italic">MediSim <span className="text-emerald-500 not-italic">ER</span></h1>
               <div className="flex items-center gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                <span className="text-[8px] font-black text-slate-500 uppercase tracking-[0.3em]">Neural Engine: V3.1 PRO</span>
+                <span className="text-[8px] font-black text-slate-500 uppercase tracking-[0.3em]">Clinical Engine: Claude</span>
               </div>
             </div>
           </div>
@@ -685,32 +685,7 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3">
-          {user ? (
-            <div className="flex items-center gap-3">
-              <div className="hidden md:flex flex-col items-end">
-                <span className="text-[10px] font-bold text-white tracking-tight">{user.displayName}</span>
-                <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Clinical Resident</span>
-              </div>
-              <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full border border-slate-800" referrerPolicy="no-referrer" />
-              <button 
-                onClick={logout}
-                className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-500 hover:text-red-400 hover:border-red-400/50 transition-all"
-                title="Logout"
-              >
-                <RefreshCcw className="w-4 h-4" />
-              </button>
-            </div>
-          ) : (
-            <button 
-              onClick={signInWithGoogle}
-              className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 hover:border-emerald-500/50 text-slate-400 hover:text-emerald-400 text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2"
-              title="Sign in to sync clinical cases across devices"
-            >
-              <Play className="w-3.5 h-3.5" />
-              Sign In (Optional)
-            </button>
-          )}
-          <button 
+          <button
             onClick={() => setShowHistory(true)}
             className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-500 hover:text-emerald-400 hover:border-emerald-400/50 transition-all flex items-center gap-2"
             title="Learning Log"

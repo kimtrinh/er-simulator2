@@ -3,7 +3,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Bot, AlertCircle, Clock, Maximize2, X, Volume2, Loader2, BrainCircuit, ChevronDown, ChevronUp } from 'lucide-react';
 import { Message } from '../types';
-import { generateSpeech } from '../services/geminiService';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -40,61 +39,36 @@ const ChatInterface: React.FC<Props> = ({ messages = [], isLoading }) => {
     // Normalize spaces
     clean = clean.replace(/\s+/g, " ").trim();
     
-    // Limit to 200 characters to keep voice generation lightning fast (under 5s-10s)
-    if (clean.length > 200) {
-      clean = clean.substring(0, 200) + "...";
+    // Cap length so narration stays focused on the key clinical update.
+    if (clean.length > 600) {
+      clean = clean.substring(0, 600) + "...";
     }
     return clean;
   };
 
-  const handlePlayVoice = async (text: string, idx: number) => {
-    if (playingIdx !== null) return;
-    setPlayingIdx(idx);
-    try {
-      // Sane 45-second timeout to handle cold starts or slower responses
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Voice generation timed out")), 45000)
-      );
-
-      const sanitizedText = sanitizeTextForTTS(text);
-
-      const audioData = await Promise.race([
-        generateSpeech(sanitizedText),
-        timeoutPromise
-      ]) as string | undefined;
-
-      if (audioData) {
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-        const binaryString = atob(audioData);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        
-        const arrayBuffer = bytes.buffer;
-        const dataView = new DataView(arrayBuffer);
-        const float32Array = new Float32Array(arrayBuffer.byteLength / 2);
-        
-        for (let i = 0; i < float32Array.length; i++) {
-          float32Array[i] = dataView.getInt16(i * 2, true) / 32768;
-        }
-
-        const audioBuffer = audioContext.createBuffer(1, float32Array.length, 24000);
-        audioBuffer.getChannelData(0).set(float32Array);
-
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContext.destination);
-        source.onended = () => setPlayingIdx(null);
-        source.start();
-      } else {
-        setPlayingIdx(null);
-      }
-    } catch (error) {
-      console.error("Speech generation failed", error);
-      setPlayingIdx(null);
+  const handlePlayVoice = (text: string, idx: number) => {
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+    if (!synth) {
+      console.warn('Speech synthesis is not supported in this browser.');
+      return;
     }
+
+    // Toggle off if this message is already speaking.
+    if (playingIdx === idx) {
+      synth.cancel();
+      setPlayingIdx(null);
+      return;
+    }
+
+    synth.cancel(); // stop any other in-flight narration
+    const utterance = new SpeechSynthesisUtterance(sanitizeTextForTTS(text));
+    utterance.rate = 1.02;
+    utterance.pitch = 1.0;
+    utterance.onend = () => setPlayingIdx(null);
+    utterance.onerror = () => setPlayingIdx(null);
+
+    setPlayingIdx(idx);
+    synth.speak(utterance);
   };
 
   useEffect(() => {
