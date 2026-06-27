@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MediSim ER — Local Edition</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;700;900&display=swap');
+  body { font-family:'Inter',sans-serif; background:#020617; color:#e2e8f0; }
+  .mono { font-family:'JetBrains Mono',monospace; }
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-thumb{background:#334155;border-radius:10px}
+  ::-webkit-scrollbar-track{background:rgba(15,23,42,.5)}
+  .fade{animation:fade .4s ease forwards}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .pulse-dot{animation:pd 1.5s infinite}
+  @keyframes pd{0%,100%{opacity:1}50%{opacity:.3}}
+  textarea{resize:none}
+</style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+<!-- ======= HEADER ======= -->
+<header class="px-4 md:px-6 py-3 border-b border-slate-900 flex justify-between items-center bg-slate-950/70 backdrop-blur shrink-0">
+  <div class="flex items-center gap-3">
+    <div class="w-9 h-9 bg-emerald-600 rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,.3)]">
+      <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+    </div>
+    <div>
+      <h1 class="text-base font-black tracking-tight uppercase italic">MediSim <span class="text-emerald-500 not-italic">ER</span></h1>
+      <div class="flex items-center gap-1.5">
+        <span id="connDot" class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
+        <span id="connText" class="text-[8px] font-black text-slate-500 uppercase tracking-[.2em]">Local Engine: offline</span>
+      </div>
+    </div>
+  </div>
+  <div class="flex items-center gap-2">
+    <button id="ttsBtn" class="p-2.5 rounded-xl border bg-emerald-500/10 border-emerald-500/40 text-emerald-400 transition" title="Toggle voice narration">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M19.07 4.93a10 10 0 010 14.14M15.54 8.46a5 5 0 010 7.07"/></svg>
+    </button>
+    <button id="resetBtn" class="p-2.5 rounded-xl border bg-slate-900 border-slate-800 text-slate-500 hover:text-red-400 hover:border-red-400/50 transition" title="New case">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 109-9 9 9 0 00-9 9"/><path d="M3 3v6h6"/></svg>
+    </button>
+    <button id="settingsBtn" class="p-2.5 rounded-xl border bg-slate-900 border-slate-800 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/50 transition" title="Settings">
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main id="main" class="flex-1 overflow-hidden flex flex-col"></main>
+
+<!-- ======= SETTINGS MODAL ======= -->
+<div id="settingsModal" class="fixed inset-0 z-50 hidden bg-slate-950/90 backdrop-blur-xl items-center justify-center p-4">
+  <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-7 space-y-5">
+    <div class="flex justify-between items-center">
+      <h2 class="text-xl font-black">Local Model Settings</h2>
+      <button id="closeSettings" class="text-slate-500 hover:text-white text-2xl leading-none">&times;</button>
+    </div>
+    <div class="space-y-1">
+      <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Server URL (LM Studio / Ollama)</label>
+      <input id="baseURL" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500/50" placeholder="http://localhost:1234/v1" />
+    </div>
+    <div class="space-y-1">
+      <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Model name</label>
+      <div class="flex gap-2">
+        <input id="model" class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500/50" placeholder="e.g. qwen2.5-32b-instruct" />
+        <button id="detectBtn" class="px-4 rounded-xl bg-slate-800 border border-slate-700 text-xs font-black uppercase tracking-widest hover:bg-slate-700 transition">Detect</button>
+      </div>
+      <p id="detectMsg" class="text-[11px] text-slate-500"></p>
+    </div>
+    <div class="space-y-1">
+      <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Creativity (temperature): <span id="tempVal">0.7</span></label>
+      <input id="temp" type="range" min="0" max="1.2" step="0.1" value="0.7" class="w-full accent-emerald-500" />
+    </div>
+    <button id="testBtn" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl transition">Test connection</button>
+    <div class="text-[11px] text-slate-500 leading-relaxed bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+      <b class="text-slate-400">LM Studio setup:</b> Developer tab → <b>Start Server</b> (port 1234) → load your Qwen model → enable <b>CORS</b> in server settings (required so this page can reach it). Then click <b>Detect</b> above.
+    </div>
+  </div>
+</div>
+
+<script>
+// ===================== STATE =====================
+const DEFAULT_VITALS = { hr:80, bpSystolic:120, bpDiastolic:80, rr:16, o2:98, temp:37.0, rhythm:'Sinus Rhythm' };
+const S = {
+  stage:'setup',
+  baseURL: localStorage.getItem('ms_baseURL') || 'http://localhost:1234/v1',
+  model: localStorage.getItem('ms_model') || '',
+  temperature: parseFloat(localStorage.getItem('ms_temp') || '0.7'),
+  tts: localStorage.getItem('ms_tts') !== '0',
+  vitals: {...DEFAULT_VITALS},
+  shown: {...DEFAULT_VITALS},
+  trend: 'stable',
+  messages: [], context:'', diagnosis:'', learningPoints:[],
+  labs:[], reports:[], exam:[],
+  loading:false
+};
+
+const $ = id => document.getElementById(id);
+const main = $('main');
+
+// ===================== MODEL API (OpenAI-compatible) =====================
+async function callModel(messages){
+  const url = S.baseURL.replace(/\/+$/,'') + '/chat/completions';
+  const res = await fetch(url, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      model: S.model || 'local-model',
+      messages,
+      temperature: S.temperature,
+      max_tokens: 1600,
+      response_format: { type: 'json_object' }
+    })
+  });
+  if(!res.ok){
+    const t = await res.text().catch(()=> '');
+    throw new Error('Model server returned '+res.status+'. '+t.slice(0,160));
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+function extractJSON(text){
+  if(!text || !text.trim()) throw new Error('The model returned an empty response.');
+  let t = text.trim().replace(/^```(?:json)?/i,'').replace(/```$/,'').trim();
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if(a===-1||b===-1) throw new Error('Could not find JSON in the model output. Try lowering temperature.');
+  return JSON.parse(t.slice(a,b+1));
+}
+
+function normVitals(v){
+  v = v || {};
+  const n = (x,d)=>{ const f=parseFloat(x); return isFinite(f)?f:d; };
+  return {
+    hr:n(v.hr,DEFAULT_VITALS.hr), bpSystolic:n(v.bpSystolic,DEFAULT_VITALS.bpSystolic),
+    bpDiastolic:n(v.bpDiastolic,DEFAULT_VITALS.bpDiastolic), rr:n(v.rr,DEFAULT_VITALS.rr),
+    o2:n(v.o2,DEFAULT_VITALS.o2), temp:n(v.temp,DEFAULT_VITALS.temp),
+    rhythm: v.rhythm || DEFAULT_VITALS.rhythm
+  };
+}
+
+// ===================== PROMPTS =====================
+const CASE_SYSTEM = `You are a Clinical Simulation Architect that builds high-fidelity emergency-room training cases.
+Respond with ONLY a JSON object of this exact shape:
+{"intro":string,"vitals":{"hr":number,"bpSystolic":number,"bpDiastolic":number,"rr":number,"o2":number,"temp":number,"rhythm":string},"context":string,"diagnosis":string,"learningPoints":[string]}
+Rules: (1) "intro" is a vivid bedside scene with nurse/patient dialogue and the chief complaint — never name the diagnosis or the learning points in it. (2) "context" is the hidden clinical truth (true diagnosis, pathophysiology, expected course, key findings) used by the engine. (3) "diagnosis" is the single hidden correct diagnosis. (4) 3-5 concise "learningPoints". (5) Vitals must fit the presentation. Output JSON only, no prose, no markdown.`;
+
+const ENGINE_SYSTEM = `You are the Bedside Simulation Engine for an ER trainer. The player is the treating physician. Given the hidden context, the recent transcript, and the player's latest action, respond with ONLY a JSON object of this shape:
+{"narrative":string,"updatedVitals":{"hr":number,"bpSystolic":number,"bpDiastolic":number,"rr":number,"o2":number,"temp":number,"rhythm":string},"vitalTrend":"stable"|"improving"|"worsening"|"critical","labResults":[{"name":string,"value":string,"unit":string,"flag":string}],"diagnosticReports":[{"title":string,"body":string}],"physicalExam":[{"system":string,"finding":string}],"clinicalRationale":string,"isCaseOver":boolean,"debrief":{"outcome":string,"score":number,"summary":string,"criticalEvents":[{"event":string,"feedback":string,"type":"positive"|"negative"|"neutral"}],"missedOpportunities":[string],"learningPoints":[string]}}
+Rules: (1) Only include labResults/diagnosticReports/physicalExam the player actually ordered or performed this turn; otherwise use empty arrays. (2) "flag" is "H","L","CRITICAL" or "". (3) Update ALL vitals fields and set vitalTrend from physiology + the player's action. (4) "clinicalRationale" explains WHY things changed. (5) Never reveal the diagnosis directly. (6) Set "isCaseOver" true when the encounter ends (stabilized/admitted, transferred, or death) and fill "debrief" (score 0-100); otherwise "debrief" may be an empty object {}. Output JSON only.`;
+
+// ===================== ENGINE FLOWS =====================
+async function startCase(topic){
+  setLoading(true, 'Generating evidence-based case…');
+  try{
+    const out = await callModel([
+      {role:'system', content:CASE_SYSTEM},
+      {role:'user', content:`Create a complex, realistic ER simulation case on the topic: "${topic}".`}
+    ]);
+    const c = extractJSON(out);
+    S.vitals = normVitals(c.vitals); S.shown = {...S.vitals};
+    S.context = c.context||''; S.diagnosis = c.diagnosis||'Unknown';
+    S.learningPoints = Array.isArray(c.learningPoints)?c.learningPoints:[];
+    S.messages = [{role:'assistant', content:c.intro||'The patient is at the bedside.'}];
+    S.labs=[]; S.reports=[]; S.exam=[]; S.trend='stable'; S.stage='play';
+    renderPlay();
+    speak(c.intro);
+  }catch(e){ showError(e.message); }
+  finally{ setLoading(false); }
+}
+
+async function progress(action){
+  if(S.loading) return;
+  S.messages.push({role:'user', content:action});
+  renderPlay();
+  setLoading(true);
+  try{
+    const transcript = S.messages.slice(-10).map(m=>(m.role==='user'?'DOCTOR':'SIM')+': '+m.content).join('\n');
+    const user = `HIDDEN CONTEXT (never reveal directly): ${S.context}
+LEARNING POINTS: ${S.learningPoints.join('; ')}
+RECENT TRANSCRIPT:
+${transcript}
+DOCTOR'S LATEST ACTION: ${action}`;
+    const out = await callModel([{role:'system',content:ENGINE_SYSTEM},{role:'user',content:user}]);
+    const r = extractJSON(out);
+    S.vitals = normVitals(r.updatedVitals);
+    S.trend = ['stable','improving','worsening','critical'].includes(r.vitalTrend)?r.vitalTrend:'stable';
+    if(Array.isArray(r.labResults)) S.labs.push(...r.labResults);
+    if(Array.isArray(r.diagnosticReports)) S.reports.unshift(...r.diagnosticReports);
+    if(Array.isArray(r.physicalExam)) S.exam.unshift(...r.physicalExam);
+    S.messages.push({role:'assistant', content:r.narrative||'…', rationale:r.clinicalRationale});
+    if(r.isCaseOver){ S.stage='debrief'; S.debrief = r.debrief||{}; renderDebrief(); speak(r.narrative); }
+    else { renderPlay(); speak(r.narrative); }
+  }catch(e){ showError(e.message); }
+  finally{ setLoading(false); }
+}
+
+// ===================== TTS =====================
+function sanitize(t){ return (t||'').replace(/[*_`#>~\-]+/g,' ').replace(/\s+/g,' ').trim().slice(0,600); }
+function speak(text){
+  if(!S.tts || !('speechSynthesis' in window) || !text) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(sanitize(text));
+  u.rate = 1.03;
+  speechSynthesis.speak(u);
+}
+
+// ===================== ECG WAVEFORM =====================
+let ecgRAF=null, ecgX=0, ecgBuf=[];
+function startECG(canvas){
+  cancelAnimationFrame(ecgRAF);
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio||1;
+  function resize(){ canvas.width=canvas.clientWidth*dpr; canvas.height=canvas.clientHeight*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); }
+  resize(); window.addEventListener('resize',resize);
+  const W=()=>canvas.clientWidth, H=()=>canvas.clientHeight;
+  ecgBuf = new Array(Math.ceil(canvas.clientWidth)).fill(0);
+  let t=0;
+  function beat(phase){ // phase 0..1 of one cardiac cycle -> mV-ish
+    const p=phase;
+    if(p<0.10) return 0.08*Math.sin(p/0.10*Math.PI);          // P
+    if(p<0.16) return 0;                                       // PR
+    if(p<0.18) return -0.12;                                   // Q
+    if(p<0.21) return 1.0;                                     // R
+    if(p<0.24) return -0.28;                                   // S
+    if(p<0.42) return 0;                                       // ST
+    if(p<0.58) return 0.20*Math.sin((p-0.42)/0.16*Math.PI);    // T
+    return 0;
+  }
+  function frame(){
+    const hr = Math.max(20, S.shown.hr||60);
+    const cycle = 60/hr;          // seconds per beat
+    const speed = 0.016;          // seconds advanced per frame (~60fps)
+    t += speed;
+    const phase = (t % cycle)/cycle;
+    const crit = hr>120||hr<50;
+    const y = beat(phase);
+    ecgBuf.push(y); if(ecgBuf.length>W()) ecgBuf.shift();
+    ctx.clearRect(0,0,W(),H());
+    // grid
+    ctx.strokeStyle='rgba(226,232,240,.05)'; ctx.lineWidth=1;
+    for(let x=0;x<W();x+=20){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H());ctx.stroke();}
+    for(let yy=0;yy<H();yy+=20){ctx.beginPath();ctx.moveTo(0,yy);ctx.lineTo(W(),yy);ctx.stroke();}
+    // trace
+    ctx.strokeStyle = crit ? '#ef4444' : '#10b981';
+    ctx.lineWidth=2; ctx.shadowBlur=8; ctx.shadowColor=ctx.strokeStyle;
+    ctx.beginPath();
+    const mid=H()*0.6, amp=H()*0.42;
+    for(let i=0;i<ecgBuf.length;i++){
+      const px=i, py=mid-ecgBuf[i]*amp;
+      i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
+    }
+    ctx.stroke(); ctx.shadowBlur=0;
+    ecgRAF=requestAnimationFrame(frame);
+  }
+  frame();
+}
+
+// ===================== VITALS DRIFT =====================
+let driftTimer=null;
+function startDrift(){
+  clearInterval(driftTimer);
+  driftTimer=setInterval(()=>{
+    const j=(v,f)=>v+(Math.random()-0.5)*f;
+    let {hr,bpSystolic:s,bpDiastolic:d,o2,rr,temp}=S.shown;
+    const tgt=S.vitals;
+    const ease=(c,t,step)=>Math.abs(c-t)<step?t:c+(c<t?step:-step);
+    hr=ease(hr,tgt.hr,1); s=ease(s,tgt.bpSystolic,1); d=ease(d,tgt.bpDiastolic,1);
+    o2=ease(o2,tgt.o2,0.5); rr=ease(rr,tgt.rr,0.5); temp=ease(temp,tgt.temp,0.1);
+    if(S.trend==='worsening'){ hr=Math.min(160,hr+0.3); s=Math.max(60,s-0.2); o2=Math.max(80,o2-0.1); }
+    if(S.trend==='critical'){ hr=Math.min(180,hr+0.8); s=Math.max(45,s-0.8); o2=Math.max(60,o2-0.3); }
+    S.shown={
+      hr:Math.round(j(hr,.6)), bpSystolic:Math.round(j(s,.6)), bpDiastolic:Math.round(j(d,.5)),
+      o2:Math.min(100,Math.round(j(o2,.2))), rr:Math.round(j(rr,.3)),
+      temp:parseFloat(j(temp,.02).toFixed(1)), rhythm:S.vitals.rhythm
+    };
+    paintVitals();
+  },1000);
+}
+function paintVitals(){
+  const v=S.shown; if(!$('v_hr')) return;
+  const hrCrit=v.hr>120||v.hr<50, o2Crit=v.o2<92, bpCrit=v.bpSystolic<90||v.bpSystolic>180;
+  $('v_hr').textContent=v.hr; $('v_hr').className='text-3xl font-black mono '+(hrCrit?'text-red-500':'text-emerald-500');
+  $('v_bp').textContent=v.bpSystolic+'/'+v.bpDiastolic; $('v_bp').className='text-3xl font-black mono '+(bpCrit?'text-red-500':'text-yellow-400');
+  $('v_o2').textContent=v.o2; $('v_o2').className='text-3xl font-black mono '+(o2Crit?'text-red-500':'text-blue-400');
+  $('v_rr').textContent=v.rr;
+  $('v_temp').textContent=v.temp+'°C';
+  $('v_rhythm').textContent=v.rhythm;
+  $('v_rhythm').className='text-[10px] font-black uppercase tracking-widest mono '+(hrCrit?'text-red-500':'text-emerald-500');
+  const trendEl=$('v_trend');
+  if(trendEl){
+    const bad=S.trend==='worsening'||S.trend==='critical';
+    trendEl.textContent=S.trend.toUpperCase();
+    trendEl.className='text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-md '+(bad?'bg-red-500/10 text-red-500 border border-red-500/20':'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20');
+  }
+}
+
+// ===================== RENDER: SETUP =====================
+const EXAMPLES=['Diabetic Ketoacidosis','STEMI / Acute MI','Septic Shock','Anaphylaxis','Tension Pneumothorax','Acute Stroke'];
+function renderSetup(){
+  S.stage='setup';
+  main.innerHTML=`
+  <div class="flex-1 flex items-center justify-center p-6 relative overflow-auto">
+    <div class="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(16,185,129,.06),transparent_70%)]"></div>
+    <div class="max-w-2xl w-full z-10 fade">
+      <div class="text-center mb-10">
+        <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-black uppercase tracking-[.3em] mb-6">Runs entirely on your local model</div>
+        <h1 class="text-6xl md:text-7xl font-black text-white tracking-tighter mb-3 uppercase italic">MediSim <span class="text-emerald-500 not-italic">ER</span></h1>
+        <p class="text-slate-500 text-base">High-fidelity bedside simulation powered by your own model in LM Studio. No keys, no cloud, no cost.</p>
+      </div>
+      <div class="bg-slate-900/50 border border-slate-800 rounded-3xl p-7">
+        <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Topic-based case</label>
+        <input id="topic" placeholder="e.g. Diabetic Ketoacidosis…" class="w-full mt-2 bg-slate-950 border border-slate-800 rounded-2xl py-4 px-4 text-sm text-white focus:outline-none focus:border-emerald-500/50" />
+        <div class="flex flex-wrap gap-2 mt-3">
+          ${EXAMPLES.map(e=>`<button class="ex px-3 py-1.5 bg-slate-900/60 border border-slate-800 rounded-lg text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-emerald-400 hover:border-emerald-500/30 transition">${e}</button>`).join('')}
+        </div>
+        <button id="genBtn" class="w-full mt-5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold py-4 rounded-2xl transition flex items-center justify-center gap-2">Generate Case →</button>
+        <p id="setupHint" class="text-center text-[11px] text-slate-500 mt-3"></p>
+      </div>
+    </div>
+  </div>`;
+  $('genBtn').onclick=()=>{ const t=$('topic').value.trim(); if(t) startCase(t); };
+  $('topic').addEventListener('keydown',e=>{ if(e.key==='Enter'){const t=$('topic').value.trim(); if(t) startCase(t);} });
+  document.querySelectorAll('.ex').forEach(b=>b.onclick=()=>{ $('topic').value=b.textContent; });
+  testConnection(true);
+}
+
+// ===================== RENDER: PLAY =====================
+const QUICK=[
+  ['History','Take a focused history from the patient.'],
+  ['Vitals','Recheck a full set of vital signs.'],
+  ['Exam','Perform a focused physical examination.'],
+  ['EKG','Obtain a 12-lead EKG.'],
+  ['Labs','Order CBC, CMP, troponin, and a venous blood gas.'],
+  ['CXR','Order a portable chest X-ray.'],
+  ['IV / O2','Establish IV access, place on O2 and monitor.'],
+];
+function renderPlay(){
+  main.innerHTML=`
+  <!-- monitor -->
+  <div class="bg-[#0f172a]/90 border-b border-slate-800 p-3 md:p-4 shrink-0">
+    <div class="max-w-[1500px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-3 md:gap-5">
+      <div class="lg:col-span-4 bg-black border border-slate-700/50 rounded-xl h-[90px] md:h-[120px] relative overflow-hidden">
+        <div class="absolute top-2 left-3 z-10"><span class="text-[9px] font-black text-emerald-500/50 uppercase tracking-[.3em]">Lead II</span></div>
+        <canvas id="ecg" class="w-full h-full"></canvas>
+        <div id="v_trend" class="absolute top-2 right-3"></div>
+      </div>
+      <div class="lg:col-span-8 grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+        ${vbox('Heart Rate','v_hr','bpm')}
+        ${vbox('Blood Pressure','v_bp','mmHg')}
+        ${vbox('SpO₂','v_o2','%')}
+        ${vbox('Resp Rate','v_rr','/min')}
+      </div>
+    </div>
+    <div class="max-w-[1500px] mx-auto flex justify-between items-center mt-2 px-1">
+      <span class="text-[9px] text-slate-600 font-black uppercase tracking-widest">Temp: <span id="v_temp" class="text-slate-400"></span></span>
+      <span class="text-[9px] text-slate-600 font-black uppercase tracking-widest">Rhythm: <span id="v_rhythm"></span></span>
+    </div>
+  </div>
+  <!-- body -->
+  <div class="flex-1 flex overflow-hidden">
+    <div class="flex-1 flex flex-col border-r border-slate-900 min-w-0">
+      <div id="chat" class="flex-1 overflow-y-auto p-3 md:p-5 space-y-4"></div>
+      <div class="border-t border-slate-900 p-3 md:p-4 bg-slate-950/70">
+        <div class="flex flex-wrap gap-2 mb-3">
+          ${QUICK.map((q,i)=>`<button data-q="${i}" class="qa px-3 py-1.5 bg-slate-900/60 border border-slate-800 rounded-lg text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-emerald-400 hover:border-emerald-500/30 transition">${q[0]}</button>`).join('')}
+        </div>
+        <div class="flex items-end gap-2">
+          <textarea id="cmd" rows="1" placeholder="Enter an order or action…" class="flex-1 bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500/50 max-h-32"></textarea>
+          <button id="micBtn" class="p-3 rounded-2xl bg-slate-900 border border-slate-800 text-slate-500 hover:text-emerald-400 transition" title="Dictate">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4"/></svg>
+          </button>
+          <button id="sendBtn" class="p-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white transition">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    <aside class="hidden md:block w-[340px] overflow-y-auto p-5 space-y-6 bg-slate-950/60 shrink-0">
+      <h3 class="text-[10px] font-black uppercase tracking-[.3em] text-slate-500 border-b border-slate-800 pb-3">Clinical Workspace</h3>
+      <div id="ws"></div>
+    </aside>
+  </div>`;
+  // wire
+  startECG($('ecg')); startDrift(); paintVitals();
+  renderChat(); renderWorkspace();
+  const cmd=$('cmd');
+  const send=()=>{ const t=cmd.value.trim(); if(t&&!S.loading){ cmd.value=''; cmd.style.height='auto'; progress(t);} };
+  $('sendBtn').onclick=send;
+  cmd.addEventListener('input',()=>{cmd.style.height='auto';cmd.style.height=Math.min(cmd.scrollHeight,128)+'px';});
+  cmd.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} });
+  document.querySelectorAll('.qa').forEach(b=>b.onclick=()=>{ if(!S.loading) progress(QUICK[+b.dataset.q][1]); });
+  $('micBtn').onclick=startDictation;
+}
+function vbox(label,id,unit){
+  return `<div class="bg-slate-900/40 border border-slate-800/50 rounded-2xl p-2 md:p-3 flex flex-col justify-between">
+    <span class="text-[8px] md:text-[10px] font-black uppercase tracking-widest text-slate-500">${label}</span>
+    <div class="flex items-baseline gap-1 mt-1"><span id="${id}" class="text-3xl font-black mono text-emerald-500">--</span><span class="text-[9px] text-slate-600 font-bold uppercase">${unit}</span></div>
+  </div>`;
+}
+function renderChat(){
+  const c=$('chat'); if(!c) return;
+  c.innerHTML=S.messages.map(m=>{
+    if(m.role==='user') return `<div class="flex justify-end fade"><div class="max-w-[80%] bg-blue-600/10 border border-blue-500/20 rounded-3xl rounded-tr-none p-4 text-sm text-blue-100">${esc(m.content)}</div></div>`;
+    return `<div class="flex gap-3 fade"><div class="w-9 h-9 rounded-2xl bg-emerald-600/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500 shrink-0">
+      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg></div>
+      <div class="max-w-[80%] bg-slate-900/80 border border-slate-800 rounded-3xl rounded-tl-none p-4 text-sm text-slate-200">
+        <div class="whitespace-pre-wrap leading-relaxed">${esc(m.content)}</div>
+        ${m.rationale?`<details class="mt-3 pt-3 border-t border-slate-800/50"><summary class="text-[10px] font-black uppercase tracking-widest text-emerald-500/60 cursor-pointer">Clinical rationale</summary><div class="mt-2 text-xs text-slate-400 italic mono">${esc(m.rationale)}</div></details>`:''}
+      </div></div>`;
+  }).join('') + (S.loading?`<div class="flex gap-3"><div class="w-9 h-9 rounded-2xl bg-emerald-600/10 border border-emerald-500/20 flex items-center justify-center"><span class="w-2 h-2 bg-emerald-500 rounded-full pulse-dot"></span></div><div class="bg-slate-900/50 border border-slate-800 rounded-2xl px-4 py-3 text-[10px] text-emerald-500 font-black uppercase tracking-widest">Processing clinical logic…</div></div>`:'');
+  c.scrollTop=c.scrollHeight;
+}
+function renderWorkspace(){
+  const ws=$('ws'); if(!ws) return;
+  let h='';
+  if(S.exam.length){ h+=section('Physical Exam','blue', S.exam.map(e=>`<div class="p-3 bg-slate-900/40 rounded-xl border-l-2 border-blue-600"><span class="text-[9px] font-black text-slate-500 uppercase tracking-widest">${esc(e.system)}</span><p class="text-sm text-slate-200 mt-1">${esc(e.finding)}</p></div>`).join('')); }
+  if(S.reports.length){ h+=section('Imaging','emerald', S.reports.map(r=>`<div class="p-3 bg-slate-900/40 rounded-xl border-l-2 border-emerald-600"><span class="text-[9px] font-black text-emerald-400 uppercase tracking-widest">${esc(r.title)}</span><p class="text-sm text-slate-200 mt-1">${esc(r.body)}</p></div>`).join('')); }
+  if(S.labs.length){ h+=section('Laboratory','yellow', `<div class="bg-slate-900/40 rounded-xl divide-y divide-slate-800/50">${S.labs.map(l=>`<div class="flex justify-between px-3 py-2"><span class="text-xs text-slate-300">${esc(l.name)}</span><span class="text-xs font-bold ${l.flag?'text-red-500':'text-emerald-500'}">${esc(String(l.value))} <span class="text-[9px] text-slate-600 uppercase">${esc(l.unit||'')}</span></span></div>`).join('')}</div>`); }
+  ws.innerHTML = h || `<p class="text-xs text-slate-600">Order labs, imaging, or an exam to populate the chart.</p>`;
+}
+function section(title,color,inner){ return `<div class="space-y-2 mb-6"><div class="text-[10px] font-black uppercase tracking-widest text-${color}-500">${title}</div>${inner}</div>`; }
+
+// ===================== RENDER: DEBRIEF =====================
+function renderDebrief(){
+  const d=S.debrief||{}; const score=Math.round(d.score||0);
+  clearInterval(driftTimer); cancelAnimationFrame(ecgRAF);
+  const ev=Array.isArray(d.criticalEvents)?d.criticalEvents:[];
+  main.innerHTML=`
+  <div class="flex-1 overflow-y-auto p-6">
+    <div class="max-w-3xl mx-auto fade space-y-6">
+      <div class="text-center py-6">
+        <div class="text-[10px] font-black uppercase tracking-[.3em] text-slate-500 mb-2">Case Debrief — ${esc(S.diagnosis)}</div>
+        <div class="text-7xl font-black mono ${score>=80?'text-emerald-500':score>=60?'text-yellow-500':'text-red-500'}">${score}<span class="text-2xl text-slate-600">/100</span></div>
+        <div class="text-lg font-bold text-white mt-1">${esc(d.outcome||'Case complete')}</div>
+      </div>
+      <div class="bg-slate-900/50 border border-slate-800 rounded-2xl p-5 text-sm text-slate-300 leading-relaxed">${esc(d.summary||'')}</div>
+      ${ev.length?`<div class="space-y-2"><h3 class="text-[10px] font-black uppercase tracking-widest text-slate-500">Critical Events</h3>${ev.map(e=>`<div class="p-4 bg-slate-900/40 border border-slate-800 rounded-xl border-l-4 ${e.type==='positive'?'border-l-emerald-600':e.type==='negative'?'border-l-red-600':'border-l-slate-600'}"><div class="text-sm font-bold ${e.type==='positive'?'text-emerald-400':e.type==='negative'?'text-red-400':'text-slate-300'}">${esc(e.event)}</div><p class="text-xs text-slate-400 mt-1">${esc(e.feedback)}</p></div>`).join('')}</div>`:''}
+      ${arrSec('Missed Opportunities','red',d.missedOpportunities)}
+      ${arrSec('Key Learning Points','emerald',d.learningPoints&&d.learningPoints.length?d.learningPoints:S.learningPoints)}
+      <div class="flex gap-3 pt-2">
+        <button id="dlBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-xl transition">Download report</button>
+        <button id="newBtn" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl transition">New case</button>
+      </div>
+    </div>
+  </div>`;
+  $('newBtn').onclick=()=>renderSetup();
+  $('dlBtn').onclick=()=>downloadReport(d,score);
+}
+function arrSec(title,color,arr){
+  if(!Array.isArray(arr)||!arr.length) return '';
+  return `<div class="space-y-2"><h3 class="text-[10px] font-black uppercase tracking-widest text-${color}-500">${title}</h3><ul class="space-y-1">${arr.map(x=>`<li class="text-xs text-slate-300 flex gap-2"><span class="text-${color}-500">•</span>${esc(x)}</li>`).join('')}</ul></div>`;
+}
+function downloadReport(d,score){
+  const txt=`MEDISIM ER — CASE REPORT
+Diagnosis: ${S.diagnosis}
+Outcome: ${d.outcome||''}
+Score: ${score}/100
+
+SUMMARY
+${d.summary||''}
+
+MISSED OPPORTUNITIES
+${(d.missedOpportunities||[]).map(x=>'- '+x).join('\n')}
+
+LEARNING POINTS
+${((d.learningPoints&&d.learningPoints.length?d.learningPoints:S.learningPoints)||[]).map(x=>'- '+x).join('\n')}`;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain'}));
+  a.download='MediSim_'+S.diagnosis.replace(/\s+/g,'_')+'.txt'; a.click();
+}
+
+// ===================== HELPERS =====================
+function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function setLoading(on,hint){ S.loading=on;
+  if(S.stage==='setup'){ const b=$('genBtn'); if(b){b.disabled=on;b.textContent=on?'Generating…':'Generate Case →';} if(hint&&$('setupHint'))$('setupHint').textContent=hint; }
+  else renderChat();
+}
+function showError(msg){
+  if(S.stage==='setup'){ if($('setupHint')) $('setupHint').innerHTML=`<span class="text-red-400">⚠ ${esc(msg)}</span>`; }
+  else { S.messages.push({role:'assistant',content:'⚠ '+msg}); renderChat(); }
+}
+
+// ===================== CONNECTION TEST / DETECT =====================
+async function testConnection(silent){
+  try{
+    const res=await fetch(S.baseURL.replace(/\/+$/,'')+'/models');
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const data=await res.json();
+    const ids=(data.data||[]).map(m=>m.id);
+    $('connDot').className='w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot';
+    $('connText').textContent='Local Engine: connected';
+    if(!silent && $('detectMsg')) $('detectMsg').innerHTML='<span class="text-emerald-400">Connected. Models: '+esc(ids.join(', ')||'(none loaded)')+'</span>';
+    if(!S.model && ids[0]){ S.model=ids[0]; if($('model'))$('model').value=ids[0]; localStorage.setItem('ms_model',ids[0]); }
+    if(S.stage==='setup'&&$('setupHint')&&!$('setupHint').textContent) $('setupHint').textContent='Connected to local model — ready.';
+    return ids;
+  }catch(e){
+    $('connDot').className='w-1.5 h-1.5 rounded-full bg-red-500';
+    $('connText').textContent='Local Engine: offline';
+    if(!silent && $('detectMsg')) $('detectMsg').innerHTML='<span class="text-red-400">Cannot reach '+esc(S.baseURL)+'. Start the server in LM Studio and enable CORS.</span>';
+    if(S.stage==='setup'&&$('setupHint')) $('setupHint').innerHTML='<span class="text-slate-500">Tip: open Settings ⚙ and connect to LM Studio first.</span>';
+    return null;
+  }
+}
+
+// ===================== SPEECH RECOGNITION (dictation) =====================
+let recog=null;
+function startDictation(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){ alert('Voice dictation is not supported in this browser.'); return; }
+  if(!recog){ recog=new SR(); recog.lang='en-US'; recog.interimResults=false;
+    recog.onresult=e=>{ const t=e.results[0][0].transcript.replace(/\.$/,''); const c=$('cmd'); if(c){c.value=(c.value?c.value+' ':'')+t;} };
+  }
+  try{ recog.start(); }catch(_){}
+}
+
+// ===================== SETTINGS WIRING =====================
+$('settingsBtn').onclick=()=>{ openSettings(); };
+$('closeSettings').onclick=()=>{ $('settingsModal').classList.add('hidden'); $('settingsModal').classList.remove('flex'); };
+function openSettings(){
+  $('baseURL').value=S.baseURL; $('model').value=S.model; $('temp').value=S.temperature; $('tempVal').textContent=S.temperature;
+  $('settingsModal').classList.remove('hidden'); $('settingsModal').classList.add('flex');
+}
+$('baseURL').addEventListener('change',e=>{ S.baseURL=e.target.value.trim(); localStorage.setItem('ms_baseURL',S.baseURL); });
+$('model').addEventListener('change',e=>{ S.model=e.target.value.trim(); localStorage.setItem('ms_model',S.model); });
+$('temp').addEventListener('input',e=>{ S.temperature=parseFloat(e.target.value); $('tempVal').textContent=S.temperature; localStorage.setItem('ms_temp',S.temperature); });
+$('detectBtn').onclick=()=>{ S.baseURL=$('baseURL').value.trim(); testConnection(false); };
+$('testBtn').onclick=()=>{ S.baseURL=$('baseURL').value.trim(); localStorage.setItem('ms_baseURL',S.baseURL); testConnection(false); };
+$('ttsBtn').onclick=()=>{ S.tts=!S.tts; localStorage.setItem('ms_tts',S.tts?'1':'0'); if(!S.tts&&'speechSynthesis'in window) speechSynthesis.cancel();
+  $('ttsBtn').className='p-2.5 rounded-xl border transition '+(S.tts?'bg-emerald-500/10 border-emerald-500/40 text-emerald-400':'bg-slate-900 border-slate-800 text-slate-500'); };
+$('resetBtn').onclick=()=>{ if('speechSynthesis'in window)speechSynthesis.cancel(); clearInterval(driftTimer); cancelAnimationFrame(ecgRAF); renderSetup(); };
+
+// init
+if(!S.tts) $('ttsBtn').className='p-2.5 rounded-xl border transition bg-slate-900 border-slate-800 text-slate-500';
+renderSetup();
+</script>
+</body>
+</html>
