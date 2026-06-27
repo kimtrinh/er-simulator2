@@ -109,8 +109,10 @@ async function callModel(messages){
       model: S.model || 'local-model',
       messages,
       temperature: S.temperature,
-      max_tokens: 1600,
-      response_format: { type: 'json_object' }
+      max_tokens: 1600
+      // Note: no response_format — we ask for JSON in the prompt and extract it
+      // ourselves, which is compatible with every local server (LM Studio,
+      // Ollama, llama.cpp) regardless of which response_format types it supports.
     })
   });
   if(!res.ok){
