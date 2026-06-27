@@ -1,0 +1,10 @@
+{
+  "name": "MediSim ER: Clinical AI Terminal",
+  "description": "A high-fidelity ER simulation engine. Generate evidence-based clinical cases from any medical topic or clinical record. Features real-time vitals, diagnostic reporting, and AI-driven debriefing.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

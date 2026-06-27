@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MediSim: ER CME Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script async defer src="https://apis.google.com/js/api.js"></script>
+    <script async defer src="https://accounts.google.com/gsi/client"></script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;700&display=swap');
+      
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: #020617;
+        color: #e2e8f0;
+        overflow: hidden;
+      }
+      
+      .monitor-font {
+        font-family: 'JetBrains Mono', monospace;
+      }
+
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar {
+        width: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: rgba(15, 23, 42, 0.5); 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #334155; 
+        border-radius: 10px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #475569; 
+      }
+      
+      .input-scrollbar::-webkit-scrollbar {
+        width: 4px;
+      }
+      .input-scrollbar::-webkit-scrollbar-thumb {
+        background: rgba(16, 185, 129, 0.2);
+        border-radius: 4px;
+      }
+
+      .crt-flicker {
+        animation: flicker 0.15s infinite;
+      }
+      
+      @keyframes flicker {
+        0% { opacity: 0.98; }
+        50% { opacity: 1; }
+        100% { opacity: 0.99; }
+      }
+
+      .animate-fadeIn {
+        animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      }
+
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      .clinical-panel {
+        background: rgba(15, 23, 42, 0.8);
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(51, 65, 85, 0.5);
+      }
+
+      textarea {
+        resize: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="error-log" style="display:none; color:red; position:absolute; z-index:9999;"></div>
+    <script>
+      const el = document.getElementById('error-log');
+      window.onerror = function(message, source, lineno, colno, error) {
+        el.style.display = 'block';
+        el.innerHTML += '<p>' + message + ' ' + (error ? error.stack : '') + '</p>';
+      };
+      window.addEventListener('unhandledrejection', function(event) {
+        el.style.display = 'block';
+        el.innerHTML += '<p>Promise Rejection: ' + (event.reason ? event.reason.toString() : 'Unknown') + '</p>';
+      });
+    </script>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>
