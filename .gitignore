@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+dist/
+
+# Environment / secrets — never commit real keys
+.env
+.env.local
+.env.*.local
+
+# Local Firebase config with real values (commit only blank placeholders)
+firebase-applet-config.local.json
+
+# Logs / OS
+*.log
+.DS_Store
