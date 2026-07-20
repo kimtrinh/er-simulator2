@@ -307,11 +307,12 @@ STRICT RULES:
 4. Update "updatedVitals" (all of hr, bpSystolic, bpDiastolic, rr, o2, temp, rhythm) and "vitalTrend" based on physiology and the player's actions.
 5. "clinicalRationale" explains WHY vitals/findings changed, grounded in pathophysiology.
 6. Only return labs/imaging/exam findings the player actually ordered or performed this turn. Do not volunteer the diagnosis.
-7. Set "isCaseOver" to true when the encounter reaches a natural end (stabilized/admitted, transferred, or death). When true, populate "debriefData" with a fair evaluation against these learning points: ${cmePoints.join(
+7. If the player orders something medically invalid or non-existent (e.g., "Tylenol level" for a medication order), acknowledge it in the narrative and briefly explain why it's not available in real clinical practice. Do NOT return it in the structured outputs.
+8. Set "isCaseOver" to true when the encounter reaches a natural end (stabilized/admitted, transferred, or death). When true, populate "debriefData" with a fair evaluation against these learning points: ${cmePoints.join(
     "; "
   )}.
-8. If the player requests a visual that exists, set "imageIdToDisplay" to its id.
-9. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
+9. If the player requests a visual that exists, set "imageIdToDisplay" to its id.
+10. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
 
   const visualInventory = (visuals || [])
     .map((v) => `id ${v.id}: ${v.label}`)
