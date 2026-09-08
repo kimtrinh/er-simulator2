@@ -1,4 +1,8 @@
 
+import type { TrainingLevel } from './data/trainingLevels';
+
+export type { TrainingLevel };
+
 export interface Vitals {
   hr: number;
   bpSystolic: number;
@@ -41,6 +45,12 @@ export interface DebriefData {
   criticalEvents: CriticalEvent[];
   missedOpportunities: string[];
   cmeLearningPoints: string[];
+  /** Engine feedback on the differential the player committed to. */
+  diagnosisReview?: string;
+  /** The true diagnosis, revealed at debrief. */
+  correctDiagnosis?: string;
+  /** Snapshot of the differential the player submitted during the case. */
+  submittedDiagnoses?: WorkingDiagnosis[];
 }
 
 /**
@@ -98,6 +108,39 @@ export interface PhysicalExamResult {
   timestamp: number;
 }
 
+/** One entry on the player's working differential. Several can be active at once. */
+export interface WorkingDiagnosis {
+  id: string;
+  name: string;
+  /** How strongly the player is committing to this entry. */
+  confidence: 'leading' | 'considering' | 'ruled-out';
+  timestamp: number;
+  /** True once the differential containing it has been documented to the chart. */
+  submitted?: boolean;
+}
+
+export type OrderCategory =
+  | 'critical'
+  | 'medication'
+  | 'lab'
+  | 'imaging'
+  | 'procedure'
+  | 'exam'
+  | 'history'
+  | 'consult'
+  | 'disposition'
+  | 'other';
+
+/** Every order / action the player has issued, kept as a running chart log. */
+export interface OrderLogEntry {
+  id: string;
+  label: string;
+  detail: string;
+  category: OrderCategory;
+  timestamp: number;
+  critical?: boolean;
+}
+
 export interface CaseHistoryEntry {
   id: string;
   timestamp: number;
@@ -108,6 +151,8 @@ export interface CaseHistoryEntry {
   criticalEvents: CriticalEvent[];
   missedOpportunities: string[];
   learningPoints: string[];
+  submittedDiagnoses?: string[];
+  level?: TrainingLevel;
 }
 
 export interface GameState {
@@ -125,6 +170,14 @@ export interface GameState {
   diagnosticReports: DiagnosticReport[];
   physicalExam: PhysicalExamResult[];
   vitalTrend: 'stable' | 'improving' | 'worsening' | 'critical';
+  /** Player's working differential — supports several diagnoses at once. */
+  workingDiagnoses: WorkingDiagnosis[];
+  /** Running log of every order placed, incl. meds given. */
+  orderLog: OrderLogEntry[];
+  /** Case-specific critical actions surfaced by the engine as clickable orders. */
+  criticalActions: string[];
+  /** Training level the case was pitched at. */
+  level: TrainingLevel;
 }
 
 export interface ActionPayload {

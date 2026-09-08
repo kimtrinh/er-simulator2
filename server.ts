@@ -30,7 +30,7 @@ async function startServer() {
   // Generate a case from a free-text medical topic.
   app.post("/api/sim/topic", async (req: Request, res: Response) => {
     try {
-      const data = await startCaseFromTopicCmd(req.body.topic);
+      const data = await startCaseFromTopicCmd(req.body.topic, req.body.level);
       res.json(data);
     } catch (e: any) {
       console.error(e);
@@ -43,7 +43,8 @@ async function startServer() {
     try {
       const data = await analyzePDFAndStartCaseCmd(
         req.body.files,
-        req.body.extractedImages
+        req.body.extractedImages,
+        req.body.level
       );
       res.json(data);
     } catch (e: any) {
@@ -73,13 +74,16 @@ async function startServer() {
   // Advance the simulation one player action at a time.
   app.post("/api/sim/progress", async (req: Request, res: Response) => {
     try {
-      const { context, history, userAction, visuals, cmePoints } = req.body;
+      const { context, history, userAction, visuals, cmePoints, workingDiagnoses, level } =
+        req.body;
       const data = await progressSimulationCmd(
         context,
         history,
         userAction,
         visuals,
-        cmePoints
+        cmePoints,
+        workingDiagnoses,
+        level
       );
       res.json(data);
     } catch (e: any) {

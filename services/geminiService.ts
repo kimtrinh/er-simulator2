@@ -3,6 +3,7 @@ import {
   SimulationResponse,
   ExtractedImage,
   PatientVisualBrief,
+  TrainingLevel,
 } from "../types";
 
 /**
@@ -28,30 +29,29 @@ const postJSON = async (url: string, body: unknown) => {
   return data;
 };
 
-export const startCaseFromTopic = async (
-  topic: string
-): Promise<{
+export interface CaseInitResponse {
   intro: string;
   vitals: Vitals;
   context: string;
   learningPoints: string[];
   diagnosis: string;
+  /** What the patient looks like, used to render the bedside image. */
   patientVisual?: PatientVisualBrief;
+  /** Time-critical actions for this case, surfaced as clickable orders. */
+  criticalActions: string[];
   visualCatalog: ExtractedImage[];
-}> => postJSON("/api/sim/topic", { topic });
+}
+
+export const startCaseFromTopic = async (
+  topic: string,
+  level: TrainingLevel
+): Promise<CaseInitResponse> => postJSON("/api/sim/topic", { topic, level });
 
 export const analyzePDFAndStartCase = async (
   files: GeminiFileInput[],
-  extractedImages: string[]
-): Promise<{
-  intro: string;
-  vitals: Vitals;
-  context: string;
-  learningPoints: string[];
-  diagnosis: string;
-  patientVisual?: PatientVisualBrief;
-  visualCatalog: ExtractedImage[];
-}> => postJSON("/api/sim/pdf", { files, extractedImages });
+  extractedImages: string[],
+  level: TrainingLevel
+): Promise<CaseInitResponse> => postJSON("/api/sim/pdf", { files, extractedImages, level });
 
 /**
  * Render the bedside image of the patient described by `brief`. Never rejects
@@ -68,7 +68,10 @@ export const progressSimulation = async (
   history: string[],
   userAction: string,
   visuals: ExtractedImage[],
-  cmePoints: string[]
+  cmePoints: string[],
+  /** The player's current working differential, in their own words. */
+  workingDiagnoses: string[] = [],
+  level?: TrainingLevel
 ): Promise<SimulationResponse> =>
   postJSON("/api/sim/progress", {
     context,
@@ -78,4 +81,6 @@ export const progressSimulation = async (
     // every turn would balloon each request by megabytes.
     visuals: (visuals || []).map(({ id, label }) => ({ id, label })),
     cmePoints,
+    workingDiagnoses,
+    level,
   });

@@ -9,9 +9,13 @@ The clinical engine is powered by **Claude** (Anthropic API), and the bedside pa
 - **Two ways to start a case** — type a medical topic ("Diabetic Ketoacidosis") or upload clinical records (PDF / images).
 - **Bedside patient view** — every case renders a photo of *this* patient with *this* pathology. A 37-year-old trauma patient shows the bleeding lower extremity and the head injury, not a stock elderly portrait. The image re-renders when the patient's visible appearance changes — a tourniquet goes on, the patient gets intubated, the bleeding stops.
 - **Live vitals monitor** — animated ECG waveform, HR / BP / RR / O₂ / temp with physiologic drift, and a stable → critical trend engine.
-- **Clinical workspace** — labs, imaging reports, and physical-exam findings collect in a side chart as you order them.
+- **Three training levels** — pick Medical Student, Resident, or Attending before the case. The level changes how the case is written (classic vs. undifferentiated), how much the team gives away at the bedside (the nurse prompts you vs. consultants pushing back), whether critical actions are suggested up front, and how strictly the debrief is marked.
+- **Four-tab workspace** — Sim Room, Orders, Diagnosis, and Chart sit under the always-visible monitor, so you can jump from order entry back to the bedside in one click.
+- **Clickable order catalogue** — every bedside action is an order you can search and click, including the time-critical ones: pelvic binder, arterial tourniquet, wound packing, needle decompression, massive transfusion, TXA, REBOA, thoracotomy, cricothyrotomy. Batch them into a signed order set or fire one STAT. The engine also names the critical actions this particular patient needs and surfaces them as suggestions.
+- **A real differential** — carry several working diagnoses at once, rank them leading / considering / ruled out, revise them as data returns, and document them to the chart. The debrief grades the breadth, ranking, and timing of your differential, not just the final answer.
+- **Patient chart** — a running Orders & Meds Given log (filterable by meds, labs, imaging, procedures, critical) alongside physical-exam findings, imaging reports, and labs.
 - **Voice narration** — read clinical updates aloud via the browser's built-in speech synthesis (no extra services).
-- **Scored debrief** — outcome, 0–100 performance breakdown, critical events, missed opportunities, and CME learning points.
+- **Scored debrief** — outcome, 0–100 performance breakdown, differential review against the true diagnosis, critical events, missed opportunities, and CME learning points.
 - **Learning Log** — past cases are saved locally in your browser; download any case as a report.
 
 ## Run locally
@@ -53,10 +57,13 @@ Browser (React + Vite)
             └─ Gemini (server/imageServer.ts) — the bedside photo of the patient
 ```
 
-- `server/claudeServer.ts` — builds the prompts and calls Claude with structured outputs so every response is valid JSON (case setup, vitals, labs, imaging, debrief).
+- `server/claudeServer.ts` — builds the prompts and calls Claude with structured outputs so every response is valid JSON (case setup, critical actions, vitals, labs, imaging, debrief).
 - `server/imageServer.ts` — turns a case's patient description into a bedside image.
 - `services/geminiService.ts` — the browser's thin client for those endpoints.
+- `data/orderCatalog.ts` — the bedside order catalogue: every clickable order, which ones count as critical actions, and the matching used to file free-text orders into the chart.
+- `data/trainingLevels.ts` — the three training levels and the prompt fragments that pitch the case, the bedside, and the marking at each.
 - History is stored in `localStorage`; there is no external database or sign-in.
+- `medisim-er-local.html` is a standalone single-file edition that runs against your own model in LM Studio / Ollama. It mirrors the same workspace, order catalogue, and differential.
 
 ### How the patient imagery works
 

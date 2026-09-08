@@ -12,9 +12,11 @@ import {
   CheckCircle2, 
   XCircle, 
   Info,
-  ChevronRight
+  ChevronRight,
+  Brain
 } from 'lucide-react';
-import { DebriefData } from '../types';
+import { DebriefData, TrainingLevel } from '../types';
+import { getLevel } from '../data/trainingLevels';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -24,6 +26,7 @@ function cn(...inputs: ClassValue[]) {
 
 interface Props {
   data: DebriefData;
+  level?: TrainingLevel;
   onRestart: () => void;
 }
 
@@ -52,7 +55,8 @@ const ProgressBar = ({ label, value, icon: Icon }: { label: string; value: numbe
     );
 };
 
-const DebriefScreen: React.FC<Props> = ({ data, onRestart }) => {
+const DebriefScreen: React.FC<Props> = ({ data, level, onRestart }) => {
+  const levelSpec = level ? getLevel(level) : null;
   const scoreColor = data.score >= 80 ? 'text-emerald-400 border-emerald-500/30 shadow-emerald-500/20' 
                    : data.score >= 60 ? 'text-yellow-400 border-yellow-500/30 shadow-yellow-500/20' 
                    : 'text-red-400 border-red-500/30 shadow-red-500/20';
@@ -60,6 +64,14 @@ const DebriefScreen: React.FC<Props> = ({ data, onRestart }) => {
   const criticalEvents = data.criticalEvents || [];
   const missedOpportunities = data.missedOpportunities || [];
   const cmeLearningPoints = data.cmeLearningPoints || [];
+  const submittedDiagnoses = data.submittedDiagnoses || [];
+  const showDifferential = submittedDiagnoses.length > 0 || !!data.correctDiagnosis;
+
+  const namedTheDiagnosis = (name: string) => {
+    const truth = (data.correctDiagnosis || '').toLowerCase();
+    const guess = name.toLowerCase();
+    return !!truth && (truth.includes(guess) || guess.includes(truth));
+  };
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-950 selection:bg-emerald-500/30">
@@ -98,6 +110,11 @@ const DebriefScreen: React.FC<Props> = ({ data, onRestart }) => {
                 >
                   {data.outcome}
                 </motion.h2>
+                {levelSpec && (
+                  <span className="mt-4 px-4 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-[9px] font-black uppercase tracking-[0.25em] text-slate-400 z-10">
+                    Marked at {levelSpec.label} level
+                  </span>
+                )}
             </div>
 
             {/* Performance Breakdown */}
@@ -134,6 +151,78 @@ const DebriefScreen: React.FC<Props> = ({ data, onRestart }) => {
             </h3>
             <p className="text-slate-300 leading-relaxed text-lg font-medium max-w-4xl">{data.summary}</p>
         </motion.div>
+
+        {/* Differential Review */}
+        {showDifferential && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+            className="bg-slate-900/40 backdrop-blur-xl border border-slate-800/50 p-10 rounded-[2.5rem] space-y-8"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-fuchsia-500/10 rounded-xl">
+                <Brain className="w-5 h-5 text-fuchsia-400" />
+              </div>
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.3em]">
+                Your Differential
+              </h3>
+            </div>
+
+            {data.correctDiagnosis && (
+              <div className="p-6 rounded-3xl bg-emerald-500/5 border border-emerald-500/20">
+                <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600/70 block mb-1">
+                  True Diagnosis
+                </span>
+                <p className="text-xl font-black text-emerald-300 tracking-tight">{data.correctDiagnosis}</p>
+              </div>
+            )}
+
+            {submittedDiagnoses.length > 0 ? (
+              <div className="space-y-3">
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-600 block">
+                  Documented during the case
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {submittedDiagnoses.map((d) => {
+                    const hit = namedTheDiagnosis(d.name);
+                    return (
+                      <span
+                        key={d.id}
+                        className={cn(
+                          'px-4 py-2 rounded-2xl text-sm font-bold border flex items-center gap-2',
+                          hit
+                            ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
+                            : d.confidence === 'ruled-out'
+                            ? 'bg-slate-900/40 border-slate-800 text-slate-600 line-through'
+                            : 'bg-slate-900/60 border-slate-700 text-slate-300'
+                        )}
+                      >
+                        {hit ? <CheckCircle2 className="w-4 h-4" /> : d.confidence === 'ruled-out' ? <XCircle className="w-4 h-4" /> : null}
+                        {d.name}
+                        {d.confidence === 'leading' && (
+                          <span className="text-[9px] uppercase tracking-widest opacity-60">Leading</span>
+                        )}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <p className="text-slate-500 text-sm italic">
+                No differential was documented during this case — committing to a ranked differential
+                is what the engine grades your diagnostic reasoning against.
+              </p>
+            )}
+
+            {data.diagnosisReview && (
+              <div className="flex items-start gap-3 p-6 bg-slate-950/40 rounded-3xl border border-slate-800/40">
+                <Info className="w-4 h-4 text-slate-600 shrink-0 mt-1" />
+                <p className="text-slate-300 text-sm leading-relaxed">{data.diagnosisReview}</p>
+              </div>
+            )}
+          </motion.div>
+        )}
 
         {/* Critical Events Analysis */}
         <div className="space-y-10">

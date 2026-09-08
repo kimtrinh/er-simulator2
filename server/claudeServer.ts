@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { getLevel, TrainingLevel } from "../data/trainingLevels";
 
 /**
  * Clinical simulation engine powered by Claude (Anthropic API).
@@ -112,6 +113,7 @@ const CASE_INIT_SCHEMA = {
     learningPoints: { type: "array", items: { type: "string" } },
     diagnosis: { type: "string" },
     patientVisual: PATIENT_VISUAL_SCHEMA,
+    criticalActions: { type: "array", items: { type: "string" } },
     visualCatalog: {
       type: "array",
       items: {
@@ -132,12 +134,17 @@ const CASE_INIT_SCHEMA = {
     "learningPoints",
     "diagnosis",
     "patientVisual",
+    "criticalActions",
     "visualCatalog",
   ],
   additionalProperties: false,
 };
 
-const CASE_SYSTEM = `You are a Clinical Simulation Architect. Transform a medical topic or a set of clinical records into a high-fidelity, evidence-based emergency-room simulation case.
+const caseSystem = (level: TrainingLevel) => {
+  const spec = getLevel(level);
+  return `You are a Clinical Simulation Architect. Transform a medical topic or a set of clinical records into a high-fidelity, evidence-based emergency-room simulation case.
+
+TRAINING LEVEL — ${spec.label.toUpperCase()}: ${spec.casePrompt}
 
 RULES:
 1. NO SPOILERS: never reveal the diagnosis or the learning objectives inside the "intro".
@@ -145,21 +152,30 @@ RULES:
 3. "context" is the hidden clinical truth (true diagnosis, pathophysiology, expected course, key exam/lab/imaging findings) used by the engine — the player never sees it.
 4. Identify 3-5 concrete learning points for the case.
 5. "diagnosis" is the single hidden correct diagnosis.
-6. Base presentation, vitals, and management on current evidence-based practice.
+6. "criticalActions" lists 4-8 time-critical interventions this specific patient needs, as short
+   imperative order names a physician would click at the bedside (e.g. "Apply pelvic binder",
+   "Arterial tourniquet", "Activate massive transfusion protocol", "Needle decompression",
+   "Activate cath lab"). Name the intervention only — never the diagnosis, and no explanation.
 7. "patientVisual" describes what THIS patient looks like at the bedside; it is rendered into a photograph the trainee sees, so it must match the case exactly:
    - "ageYears" and "sex" are the patient's real demographics from the case. A 37-year-old trauma patient is a 37-year-old, never a generic elderly patient.
    - "visibleFindings" lists only what is visible from the doorway or on exposure, in concrete physical terms: bleeding and its location and volume, deformity, burns, rash, swelling, pallor or cyanosis or jaundice, guarding, respiratory effort, obvious injuries. Name the body part and the side. Do NOT list vitals, lab values, symptoms the patient only reports, or the diagnosis itself.
    - "devices" lists what is already on the patient on arrival (C-collar, non-rebreather, tourniquet, splint, IV lines, monitor leads) — nothing the player has not ordered yet.
    - "build", "position", "distress" and "setting" ground the scene; keep them short and physical.
    - This must never contradict the "intro". If the intro says the patient is a 37-year-old man with an open tibia fracture, the visual brief says exactly that.
-8. Respond ONLY with the JSON object defined by the schema.`;
+8. Base presentation, vitals, and management on current evidence-based practice.
+9. Pitch the difficulty, the amount of missing data, and the subtlety of the findings at the training level above.
+10. Respond ONLY with the JSON object defined by the schema.`;
+};
 
-export const startCaseFromTopicCmd = async (topic: string) => {
+export const startCaseFromTopicCmd = async (
+  topic: string,
+  level: TrainingLevel = "resident"
+) => {
   const client = getClient();
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 4000,
-    system: CASE_SYSTEM,
+    system: caseSystem(level),
     messages: [
       {
         role: "user",
@@ -179,12 +195,14 @@ export const startCaseFromTopicCmd = async (topic: string) => {
     visualCatalog: [],
     patientVisual: normalizePatientVisual(parsed.patientVisual),
     learningPoints: ensureArray(parsed.learningPoints),
+    criticalActions: ensureArray(parsed.criticalActions),
   };
 };
 
 export const analyzePDFAndStartCaseCmd = async (
   files: { mimeType: string; data: string }[],
-  extractedImages: string[]
+  extractedImages: string[],
+  level: TrainingLevel = "resident"
 ) => {
   const client = getClient();
 
@@ -209,7 +227,7 @@ export const analyzePDFAndStartCaseCmd = async (
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 4000,
-    system: CASE_SYSTEM,
+    system: caseSystem(level),
     messages: [
       {
         role: "user",
@@ -243,6 +261,7 @@ There are ${extractedImages.length} visual assets available, indexed 0..${Math.m
     visualCatalog: finalVisuals,
     patientVisual: normalizePatientVisual(parsed.patientVisual),
     learningPoints: ensureArray(parsed.learningPoints),
+    criticalActions: ensureArray(parsed.criticalActions),
   };
 };
 
@@ -346,6 +365,7 @@ const SIM_PROGRESS_SCHEMA = {
           },
         },
         missedOpportunities: { type: "array", items: { type: "string" } },
+        diagnosisReview: { type: "string" },
       },
       required: [
         "outcome",
@@ -367,11 +387,17 @@ export const progressSimulationCmd = async (
   history: string[],
   userAction: string,
   visuals: { id: string; label: string }[],
-  cmePoints: string[]
+  cmePoints: string[],
+  workingDiagnoses: string[] = [],
+  level: TrainingLevel = "resident"
 ) => {
   const client = getClient();
+  const spec = getLevel(level);
 
   const system = `You are the Bedside Simulation Engine for a high-fidelity ER trainer. The player is the treating physician; you control the patient, nurse, environment, and all clinical data.
+
+TRAINING LEVEL — ${spec.label.toUpperCase()}. Bedside behaviour: ${spec.enginePrompt}
+Debrief marking: ${spec.debriefPrompt}
 
 STRICT RULES:
 1. PHYSICAL EXAM: when the player examines the patient, return findings as a "physicalExam" array of { "system", "finding" }.
@@ -380,16 +406,26 @@ STRICT RULES:
 4. Update "updatedVitals" (all of hr, bpSystolic, bpDiastolic, rr, o2, temp, rhythm) and "vitalTrend" based on physiology and the player's actions.
 5. "clinicalRationale" explains WHY vitals/findings changed, grounded in pathophysiology.
 6. Only return labs/imaging/exam findings the player actually ordered or performed this turn. Do not volunteer the diagnosis.
-7. Set "isCaseOver" to true when the encounter reaches a natural end (stabilized/admitted, transferred, or death). When true, populate "debriefData" with a fair evaluation against these learning points: ${cmePoints.join(
+7. DIFFERENTIAL: the player may carry several working diagnoses at once and may document or revise
+   that differential mid-case. Treat it as their charted reasoning — the team responds to it, but
+   never confirm or deny it outright, and never let a wrong entry on it change the underlying truth.
+8. ORDER SETS: the player may send several orders in one action. Carry out every one of them and
+   report the result of each.
+9. Hold the bedside behaviour for the training level above in every turn. Set "isCaseOver" to true when the encounter reaches a natural end (stabilized/admitted, transferred, or death). When true, populate "debriefData" with a fair evaluation against these learning points: ${cmePoints.join(
     "; "
-  )}.
-8. If the player requests a visual that exists, set "imageIdToDisplay" to its id.
-9. PATIENT APPEARANCE: the trainee is looking at a bedside image of this patient. Whenever the patient's VISIBLE appearance materially changes this turn — intubated, chest tube or central line placed, tourniquet applied, bleeding controlled, burns dressed, cyanosis resolving, a new rash or seizure, the patient going from agitated to obtunded — return "patientVisualUpdate" with a short "reason" plus the FULL updated "visibleFindings" and "devices" lists (not just the delta), and "distress"/"position" if they changed. Omit "patientVisualUpdate" entirely when nothing visible changed; ordering a lab or asking a history question changes nothing visible.
-10. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
+  )}. Score "differentialDiagnosis" on the breadth, ranking, and timing of the differential the
+   player documented — a broad differential that named the true diagnosis early scores well; a
+   narrow or anchored one scores poorly. Put that reasoning in "diagnosisReview", naming which of
+   their diagnoses were right, which were reasonable to carry, and what was missed.
+10. If the player requests a visual that exists, set "imageIdToDisplay" to its id.
+11. PATIENT APPEARANCE: the trainee is looking at a bedside image of this patient. Whenever the patient's VISIBLE appearance materially changes this turn — intubated, chest tube or central line placed, tourniquet applied, bleeding controlled, burns dressed, cyanosis resolving, a new rash or seizure, the patient going from agitated to obtunded — return "patientVisualUpdate" with a short "reason" plus the FULL updated "visibleFindings" and "devices" lists (not just the delta), and "distress"/"position" if they changed. Omit "patientVisualUpdate" entirely when nothing visible changed; ordering a lab or asking a history question changes nothing visible.
+12. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
 
   const visualInventory = (visuals || [])
     .map((v) => `id ${v.id}: ${v.label}`)
     .join(", ");
+
+  const differential = (workingDiagnoses || []).filter(Boolean);
 
   const prompt = `HIDDEN CLINICAL TRUTH (never reveal directly): ${context}
 
@@ -397,6 +433,10 @@ RECENT TRANSCRIPT:
 ${history.slice(-10).join("\n")}
 
 AVAILABLE VISUALS: ${visualInventory || "none"}
+
+PLAYER'S DOCUMENTED DIFFERENTIAL: ${
+    differential.length ? differential.join("; ") : "none documented yet"
+  }
 
 PLAYER ACTION: ${userAction}`;
 

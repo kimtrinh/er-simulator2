@@ -175,10 +175,10 @@ const VitalsMonitor: React.FC<Props> = ({ vitals, trend = 'stable', audioEnabled
 
   return (
     <div className="bg-[#0f172a]/90 backdrop-blur-2xl border-b border-[#1e293b] p-3 md:p-5 relative z-40 shrink-0 shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
-      <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-8">
+      <div className="max-w-[1600px] mx-auto grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-6">
         
         {/* Telemetry Strip */}
-        <div className="lg:col-span-4 bg-black border border-[#334155]/50 rounded-xl p-1 h-[90px] md:h-[130px] relative overflow-hidden group shadow-inner">
+        <div className="md:col-span-4 bg-black border border-[#334155]/50 rounded-xl p-1 h-[90px] md:h-[130px] relative overflow-hidden group shadow-inner">
            <div className="absolute top-2 left-3 flex flex-col gap-0 z-10">
               <span className="text-[9px] font-black text-emerald-500/50 uppercase tracking-[0.3em]">Lead II (mV)</span>
               <span className="text-[7px] font-mono text-slate-700 uppercase tracking-widest">25mm/sec</span>
@@ -204,7 +204,7 @@ const VitalsMonitor: React.FC<Props> = ({ vitals, trend = 'stable', audioEnabled
         </div>
 
         {/* Vital Parameters */}
-        <div className="lg:col-span-8 grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-5">
+        <div className="md:col-span-8 grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
           <VitalBox 
               label="Heart Rate" 
               value={liveVitals.hr} 

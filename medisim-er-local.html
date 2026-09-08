@@ -94,11 +94,239 @@ const S = {
   trend: 'stable',
   messages: [], context:'', diagnosis:'', learningPoints:[],
   labs:[], reports:[], exam:[],
+  // Workspace: which panel is showing, the player's differential, and the
+  // running order/meds log that fills the chart.
+  view:'sim', dx:[], orderLog:[], criticalActions:[],
+  level: localStorage.getItem('ms_level') || 'resident',
+  showSuggested:true,
+  basket:[], orderGroup:'critical', orderSearch:'', logFilter:'all',
   loading:false
 };
 
 const $ = id => document.getElementById(id);
 const main = $('main');
+
+// ===================== TRAINING LEVELS =====================
+// Mirrors data/trainingLevels.ts: the same engine pitched at where the player is
+// in training — how the case is written, how much the team gives away, and how
+// the debrief is marked.
+const TRAINING_LEVELS = [
+  { id:'student', label:'Medical Student', blurb:'Classic presentations. The team coaches you and flags what you miss.',
+    casePrompt:'Write a classic, textbook presentation of a common emergency diagnosis. The history, vitals, and examination should point coherently at one answer. No rare variants, no red herrings, no competing diagnoses.',
+    enginePrompt:'The nurse is experienced and proactive: she volunteers relevant observations, flags abnormal findings the player has not asked about, and gently prompts when an obvious next step is being missed. Explain the underlying physiology plainly in "clinicalRationale". Never state the diagnosis, but do not let the player stall.',
+    debriefPrompt:'Mark as a supportive clinical teacher. Score generously, credit sound reasoning even when execution was incomplete, and frame every error as a learning point.',
+    suggestionsExpanded:true },
+  { id:'resident', label:'Resident', blurb:'Comorbidity and distractors. The team follows orders but will not prompt.',
+    casePrompt:'Write a typical but non-trivial presentation: relevant comorbidity, an incomplete or unreliable history, or one distracting finding that has to be reasoned past. The diagnosis should be reachable but not obvious from the door chart.',
+    enginePrompt:'The team answers what it is asked and carries out orders competently, but volunteers nothing and never hints. Include real-world friction: results take time, the scanner is busy, the patient is a poor historian.',
+    debriefPrompt:'Mark to the standard expected of a senior resident running the resuscitation: timeliness of the critical actions, breadth and ranking of the differential, appropriate escalation.',
+    suggestionsExpanded:true },
+  { id:'attending', label:'Attending', blurb:'Undifferentiated and ambiguous. You run the room; consultants push back.',
+    casePrompt:'Write an atypical, undifferentiated, or diagnostically ambiguous presentation — a blunted response in an elderly or immunosuppressed patient, two problems at once, or a common diagnosis wearing an unfamiliar face. Data should be incomplete and some findings genuinely misleading.',
+    enginePrompt:'The team looks to the player to run the room and does nothing unprompted. Consultants may disagree, push back, or be slow to arrive. Introduce competing demands and resource constraints where they fit. Never hint, and never rescue a bad plan.',
+    debriefPrompt:'Mark as a peer reviewing a colleague: diagnostic accuracy under uncertainty, resuscitation timing, resource stewardship, disposition, and communication. Name anchoring and premature closure explicitly where they occurred.',
+    suggestionsExpanded:false }
+];
+const getLevel = id => TRAINING_LEVELS.find(l=>l.id===id) || TRAINING_LEVELS[1];
+
+// ===================== ORDER CATALOGUE =====================
+// Mirrors data/orderCatalog.ts in the hosted edition: every bedside action is a
+// clickable order, and the `critical` ones are the time-critical resuscitative
+// interventions kept one click away.
+const ORDER_GROUPS = [
+  { id:'critical', title:'Critical Actions', blurb:'Time-critical resuscitation — hemorrhage control, decompression, airway, reversal.', items:[
+    {label:'Pelvic Binder', detail:'Apply a pelvic binder centred over the greater trochanters and internally rotate/bind the legs for suspected pelvic ring injury.', category:'critical', critical:true, keywords:'pelvis pelvic fracture sheet binder trauma open book hemorrhage'},
+    {label:'Arterial Tourniquet', detail:'Apply a windlass tourniquet high and tight proximal to the extremity hemorrhage, tighten until the bleeding stops and the distal pulse is lost, and mark the time of application.', category:'critical', critical:true, keywords:'tourniquet CAT extremity amputation limb arterial bleeding exsanguination'},
+    {label:'Wound Packing / Pressure', detail:'Pack the junctional wound with hemostatic gauze and hold firm direct pressure for three minutes.', category:'critical', critical:true, keywords:'hemostatic combat gauze junctional direct pressure bleeding groin axilla'},
+    {label:'Needle Decompression', detail:'Perform needle decompression with a 14G catheter in the 5th intercostal space at the anterior axillary line for suspected tension pneumothorax.', category:'critical', critical:true, keywords:'tension pneumothorax needle thoracostomy chest decompress'},
+    {label:'Finger Thoracostomy', detail:'Perform a finger thoracostomy in the 5th intercostal space, then place a chest tube.', category:'critical', critical:true, keywords:'thoracostomy chest tube pneumothorax hemothorax trauma'},
+    {label:'Massive Transfusion Protocol', detail:'Activate the massive transfusion protocol — 1:1:1 packed red cells, plasma, and platelets — and call the blood bank now.', category:'critical', critical:true, keywords:'MTP blood products balanced resuscitation hemorrhagic shock 1:1:1'},
+    {label:'Tranexamic Acid (TXA)', detail:'Give tranexamic acid 1 g IV over 10 minutes, then 1 g infused over 8 hours, for hemorrhagic trauma within 3 hours of injury.', category:'critical', critical:true, keywords:'TXA antifibrinolytic trauma bleeding hemorrhage'},
+    {label:'Uncrossmatched Blood', detail:'Transfuse 2 units of emergency-release O-negative packed red cells through a rapid infuser/level 1 warmer.', category:'critical', critical:true, keywords:'O negative emergency release transfusion PRBC blood shock'},
+    {label:'Rapid Sequence Intubation', detail:'Perform rapid sequence intubation — preoxygenate, ketamine 1.5 mg/kg IV and rocuronium 1.2 mg/kg IV, video laryngoscopy, confirm with waveform capnography.', category:'critical', critical:true, keywords:'RSI airway intubate ETT laryngoscopy ketamine rocuronium'},
+    {label:'Cricothyrotomy', detail:'Declare a failed airway and perform a surgical cricothyrotomy (scalpel-bougie-tube).', category:'critical', critical:true, keywords:'surgical airway cric cannot intubate cannot oxygenate CICO'},
+    {label:'Defibrillate 200 J', detail:'Defibrillate at 200 J biphasic. CLEAR — shock delivered, resume compressions immediately.', category:'critical', critical:true, keywords:'defibrillation VF pulseless VT shock arrest ACLS'},
+    {label:'Start CPR / ACLS', detail:'Begin high-quality chest compressions, run the ACLS algorithm, and attach pads with a rhythm check every 2 minutes.', category:'critical', critical:true, keywords:'CPR cardiac arrest code blue compressions ACLS resuscitation'},
+    {label:'Synchronized Cardioversion', detail:'Sedate and perform synchronized cardioversion at 120 J for the unstable tachydysrhythmia.', category:'critical', critical:true, keywords:'cardioversion unstable SVT atrial fibrillation VT sync shock'},
+    {label:'Transcutaneous Pacing', detail:'Start transcutaneous pacing at 80 bpm, titrate current to electrical and mechanical capture, and give sedation.', category:'critical', critical:true, keywords:'pacing bradycardia heart block capture pacer'},
+    {label:'Pericardiocentesis', detail:'Perform an ultrasound-guided subxiphoid pericardiocentesis for tamponade physiology.', category:'critical', critical:true, keywords:'tamponade pericardial effusion drain beck triad'},
+    {label:'Resuscitative Thoracotomy', detail:'Perform a left anterolateral resuscitative thoracotomy for penetrating trauma with recent loss of vitals.', category:'critical', critical:true, keywords:'ED thoracotomy clamshell penetrating arrest cross clamp'},
+    {label:'REBOA', detail:'Consider REBOA — place a femoral arterial sheath and occlude the aorta in zone 1 for non-compressible torso hemorrhage.', category:'critical', critical:true, keywords:'aortic occlusion balloon noncompressible torso hemorrhage endovascular'},
+    {label:'Spinal Motion Restriction', detail:'Apply a rigid cervical collar and maintain spinal motion restriction with log-roll precautions.', category:'critical', critical:true, keywords:'c-collar cervical spine immobilization trauma logroll'},
+    {label:'Traction Splint', detail:'Apply a traction splint to the mid-shaft femur fracture and reassess the distal neurovascular exam.', category:'critical', critical:true, keywords:'femur fracture splint traction orthopedic'},
+    {label:'Activate Trauma Team', detail:'Activate the level 1 trauma team and mobilize the OR.', category:'critical', critical:true, keywords:'trauma activation surgery OR level 1'},
+    {label:'Activate Cath Lab', detail:'Activate the cardiac catheterization lab for primary PCI and page interventional cardiology.', category:'critical', critical:true, keywords:'STEMI PCI cath lab door to balloon MI'},
+    {label:'Activate Stroke Team', detail:'Activate the stroke team, obtain a non-contrast head CT with CTA, and calculate the NIHSS.', category:'critical', critical:true, keywords:'stroke code CVA thrombolysis thrombectomy NIHSS'},
+    {label:'Push-Dose Pressor', detail:'Give push-dose epinephrine 10–20 mcg IV every 2–5 minutes for peri-intubation hypotension.', category:'critical', critical:true, keywords:'push dose pressor epinephrine phenylephrine hypotension bridge'},
+    {label:'IM Epinephrine', detail:'Give epinephrine 0.5 mg (0.5 mL of 1:1000) IM into the lateral thigh for anaphylaxis and repeat every 5 minutes as needed.', category:'critical', critical:true, keywords:'anaphylaxis epipen allergic reaction angioedema IM epi'},
+    {label:'Naloxone', detail:'Give naloxone 0.4 mg IV/IM, titrating to adequate respirations, and support ventilation with a BVM.', category:'critical', critical:true, keywords:'opioid overdose narcan reversal apnea'},
+    {label:'D50 / Dextrose', detail:'Give 50 mL of D50W IV push for hypoglycemia and recheck the glucose in 15 minutes.', category:'critical', critical:true, keywords:'hypoglycemia dextrose glucose D50 sugar'},
+    {label:'Calcium for Hyperkalemia', detail:'Give calcium gluconate 1 g IV to stabilize the myocardium, then insulin 10 units with D50, albuterol, and arrange dialysis.', category:'critical', critical:true, keywords:'hyperkalemia potassium calcium membrane stabilization peaked T waves'},
+    {label:'3% Hypertonic Saline', detail:'Give 3% hypertonic saline 150 mL IV bolus over 10 minutes for herniation or severe symptomatic hyponatremia.', category:'critical', critical:true, keywords:'hypertonic saline hyponatremia herniation ICP cerebral edema'},
+  ]},
+  { id:'resus', title:'Airway, Breathing & Access', blurb:'Oxygenation, ventilation, monitoring, and vascular access.', items:[
+    {label:'ABCs / Primary Survey', detail:'Perform the primary survey: airway, breathing, circulation, disability, exposure.', category:'exam', keywords:'primary survey ATLS abcde trauma'},
+    {label:'Airway Positioning', detail:'Open the airway with a jaw thrust, suction secretions, and place an oral airway.', category:'procedure', keywords:'jaw thrust suction OPA NPA airway'},
+    {label:'High-Flow Oxygen', detail:'Place the patient on 15 L/min oxygen via non-rebreather mask.', category:'procedure', keywords:'oxygen NRB non rebreather hypoxia'},
+    {label:'BVM Ventilation', detail:'Begin bag-valve-mask ventilation with a two-person technique and a PEEP valve.', category:'procedure', keywords:'bag mask ventilate apnea BVM'},
+    {label:'BiPAP / NIV', detail:'Start BiPAP at 12/5 cm H2O and titrate to work of breathing and oxygenation.', category:'procedure', keywords:'noninvasive ventilation CPAP BiPAP CHF COPD'},
+    {label:'High-Flow Nasal Cannula', detail:'Start high-flow nasal cannula at 40 L/min, FiO2 titrated to a target saturation.', category:'procedure', keywords:'HFNC optiflow oxygen'},
+    {label:'Ventilator Settings', detail:'Set lung-protective ventilation: 6 mL/kg predicted body weight, PEEP 5, RR 16, FiO2 titrated to saturation.', category:'procedure', keywords:'ventilator ARDS tidal volume PEEP settings'},
+    {label:'Two Large-Bore IVs', detail:'Establish two large-bore (18G or larger) peripheral IVs and send off the initial labs.', category:'procedure', keywords:'IV access peripheral line bore'},
+    {label:'Intraosseous Access', detail:'Place an intraosseous line in the proximal tibia for immediate access.', category:'procedure', keywords:'IO tibia humeral access difficult IV'},
+    {label:'Central Line', detail:'Place an ultrasound-guided central venous catheter in the right internal jugular vein.', category:'procedure', keywords:'central venous catheter CVC IJ femoral subclavian'},
+    {label:'Arterial Line', detail:'Place a radial arterial line for continuous blood pressure monitoring.', category:'procedure', keywords:'a-line arterial blood pressure monitoring'},
+    {label:'Full Monitoring', detail:'Place the patient on continuous cardiac monitoring, pulse oximetry, capnography, and cycle the blood pressure every 5 minutes.', category:'procedure', keywords:'monitor telemetry pulse ox capnography vitals'},
+    {label:'Recheck Full Vitals', detail:'Cycle the blood pressure and recheck a complete set of vital signs including temperature.', category:'exam', keywords:'vitals repeat blood pressure recheck'},
+    {label:'Foley Catheter', detail:'Place a Foley catheter and monitor hourly urine output.', category:'procedure', keywords:'foley urinary catheter urine output'},
+    {label:'Nasogastric Tube', detail:'Place a nasogastric tube to low intermittent suction.', category:'procedure', keywords:'NG tube gastric decompression'},
+  ]},
+  { id:'meds', title:'Medications', blurb:'Drips, pushes, and antidotes with standard adult ED dosing.', items:[
+    {label:'Crystalloid Bolus', detail:'Give a 500 mL bolus of balanced crystalloid (lactated Ringer\'s) IV and reassess perfusion.', category:'medication', keywords:'fluids LR normal saline bolus resuscitation'},
+    {label:'Norepinephrine', detail:'Start a norepinephrine infusion at 0.05 mcg/kg/min, titrated to a MAP above 65 mmHg.', category:'medication', keywords:'levophed pressor vasopressor shock MAP'},
+    {label:'Epinephrine Infusion', detail:'Start an epinephrine infusion at 0.05 mcg/kg/min for refractory shock or anaphylaxis.', category:'medication', keywords:'epi drip pressor inotrope anaphylaxis'},
+    {label:'Vasopressin', detail:'Add vasopressin 0.03 units/min as a second-line vasopressor.', category:'medication', keywords:'vasopressin pressor septic shock'},
+    {label:'Broad-Spectrum Antibiotics', detail:'Give piperacillin-tazobactam 4.5 g IV and vancomycin 20 mg/kg IV after drawing blood cultures.', category:'medication', keywords:'sepsis antibiotics zosyn vancomycin cultures'},
+    {label:'Ceftriaxone + Vancomycin', detail:'Give ceftriaxone 2 g IV and vancomycin 20 mg/kg IV for suspected meningitis, plus dexamethasone 10 mg IV before the first dose.', category:'medication', keywords:'meningitis ceftriaxone dexamethasone CNS'},
+    {label:'Aspirin 324 mg', detail:'Give aspirin 324 mg chewed for suspected acute coronary syndrome.', category:'medication', keywords:'ASA aspirin ACS MI antiplatelet'},
+    {label:'Nitroglycerin', detail:'Give nitroglycerin 0.4 mg sublingual every 5 minutes, or start a drip for hypertensive pulmonary edema.', category:'medication', keywords:'nitro chest pain CHF afterload'},
+    {label:'Heparin', detail:'Start a heparin infusion — 80 units/kg bolus, then 18 units/kg/hr — after confirming there is no contraindication.', category:'medication', keywords:'anticoagulation heparin PE ACS DVT'},
+    {label:'Amiodarone', detail:'Give amiodarone 150 mg IV over 10 minutes, then an infusion at 1 mg/min.', category:'medication', keywords:'antiarrhythmic VT arrhythmia amiodarone'},
+    {label:'Adenosine', detail:'Give adenosine 6 mg rapid IV push with a flush; repeat at 12 mg if the SVT persists.', category:'medication', keywords:'SVT adenosine rapid push narrow complex'},
+    {label:'Atropine', detail:'Give atropine 1 mg IV push for symptomatic bradycardia; repeat every 3–5 minutes to a maximum of 3 mg.', category:'medication', keywords:'bradycardia atropine vagal'},
+    {label:'Magnesium Sulfate', detail:'Give magnesium sulfate 2 g IV over 15 minutes (for torsades, severe asthma, or eclampsia prophylaxis).', category:'medication', keywords:'magnesium torsades eclampsia asthma'},
+    {label:'Insulin Infusion', detail:'Start a regular insulin infusion at 0.1 units/kg/hr after fluid resuscitation and confirming the potassium is above 3.3 mmol/L.', category:'medication', keywords:'DKA insulin drip hyperglycemia'},
+    {label:'Albuterol / Ipratropium', detail:'Give continuous nebulized albuterol with ipratropium and start systemic steroids.', category:'medication', keywords:'asthma COPD bronchodilator nebulizer duoneb'},
+    {label:'Methylprednisolone', detail:'Give methylprednisolone 125 mg IV for the bronchospastic or inflammatory process.', category:'medication', keywords:'steroid solumedrol asthma COPD anaphylaxis'},
+    {label:'Fentanyl', detail:'Give fentanyl 1 mcg/kg IV for analgesia and titrate to comfort.', category:'medication', keywords:'analgesia pain opioid fentanyl'},
+    {label:'Ketamine (Analgesic Dose)', detail:'Give ketamine 0.3 mg/kg IV over 10 minutes for analgesia.', category:'medication', keywords:'ketamine pain sedation dissociative'},
+    {label:'Ondansetron', detail:'Give ondansetron 4 mg IV for nausea.', category:'medication', keywords:'zofran nausea vomiting antiemetic'},
+    {label:'Lorazepam / Benzodiazepine', detail:'Give lorazepam 4 mg IV for the seizure and prepare a second-line agent (levetiracetam 60 mg/kg).', category:'medication', keywords:'seizure status epilepticus benzo ativan midazolam'},
+    {label:'Prothrombin Complex Concentrate', detail:'Give 4-factor PCC plus vitamin K 10 mg IV to reverse warfarin-associated hemorrhage.', category:'medication', keywords:'reversal warfarin PCC kcentra vitamin K bleeding'},
+    {label:'Andexanet / Idarucizumab', detail:'Give the targeted reversal agent for the direct oral anticoagulant — idarucizumab for dabigatran, andexanet alfa for factor Xa inhibitors.', category:'medication', keywords:'DOAC reversal praxbind andexxa anticoagulant bleeding'},
+    {label:'Calcium Chloride', detail:'Give calcium chloride 1 g IV via a central line for hypocalcemia after massive transfusion.', category:'medication', keywords:'calcium citrate massive transfusion hypocalcemia'},
+    {label:'Sodium Bicarbonate', detail:'Give sodium bicarbonate 1–2 mEq/kg IV for the sodium-channel blockade or severe acidemia.', category:'medication', keywords:'bicarb acidosis TCA overdose sodium channel'},
+    {label:'Antivenom / Antidote', detail:'Contact poison control and give the indicated antidote (e.g. N-acetylcysteine, fomepizole, hydroxocobalamin, antivenom).', category:'medication', keywords:'toxicology antidote poison control NAC fomepizole cyanide'},
+    {label:'Tetanus Prophylaxis', detail:'Give Tdap 0.5 mL IM for tetanus prophylaxis.', category:'medication', keywords:'tetanus tdap wound immunization'},
+  ]},
+  { id:'labs', title:'Laboratory', blurb:'Bedside and send-out studies.', items:[
+    {label:'Bedside Glucose', detail:'Check a bedside fingerstick glucose now.', category:'lab', keywords:'glucose fingerstick sugar POC'},
+    {label:'CBC + Differential', detail:'Order a CBC with differential.', category:'lab', keywords:'cbc hemoglobin white count platelets'},
+    {label:'Chemistry / CMP', detail:'Order a comprehensive metabolic panel.', category:'lab', keywords:'chem BMP CMP electrolytes creatinine'},
+    {label:'Troponin', detail:'Order a high-sensitivity troponin now and repeat it in one hour.', category:'lab', keywords:'troponin ACS MI cardiac enzymes'},
+    {label:'Venous Blood Gas + Lactate', detail:'Order a venous blood gas with lactate.', category:'lab', keywords:'VBG ABG lactate acidosis gas'},
+    {label:'Coagulation Panel', detail:'Order PT/INR, aPTT, fibrinogen, and a TEG/ROTEM if available.', category:'lab', keywords:'INR coags fibrinogen TEG coagulopathy'},
+    {label:'Type & Crossmatch', detail:'Send a type and crossmatch for 4 units of packed red cells.', category:'lab', keywords:'type and screen crossmatch blood bank transfusion'},
+    {label:'Blood Cultures x2', detail:'Draw two sets of blood cultures from separate sites before antibiotics.', category:'lab', keywords:'cultures sepsis bacteremia'},
+    {label:'Urinalysis + Culture', detail:'Order a urinalysis with culture and a urine pregnancy test.', category:'lab', keywords:'UA urine infection pregnancy hcg'},
+    {label:'Beta-hCG', detail:'Order a quantitative serum beta-hCG.', category:'lab', keywords:'pregnancy hcg ectopic'},
+    {label:'Liver Function + Lipase', detail:'Order LFTs and a lipase.', category:'lab', keywords:'LFT lipase pancreatitis hepatic'},
+    {label:'Toxicology Screen', detail:'Order acetaminophen and salicylate levels, an ethanol level, an osmolar gap, and a urine drug screen.', category:'lab', keywords:'tox screen overdose acetaminophen salicylate osmolar'},
+    {label:'D-dimer', detail:'Order an age-adjusted D-dimer.', category:'lab', keywords:'ddimer PE DVT wells'},
+    {label:'BNP', detail:'Order a BNP.', category:'lab', keywords:'BNP heart failure CHF dyspnea'},
+    {label:'Serum Ketones / BHB', detail:'Order a serum beta-hydroxybutyrate.', category:'lab', keywords:'ketones DKA BHB'},
+    {label:'TSH / Cortisol', detail:'Order a TSH, free T4, and a random cortisol.', category:'lab', keywords:'thyroid storm myxedema adrenal cortisol endocrine'},
+    {label:'CSF Studies', detail:'Send CSF for cell count, protein, glucose, Gram stain, culture, and PCR after the lumbar puncture.', category:'lab', keywords:'CSF lumbar puncture meningitis xanthochromia'},
+  ]},
+  { id:'imaging', title:'Imaging', blurb:'Bedside ultrasound through advanced cross-sectional imaging.', items:[
+    {label:'12-Lead EKG', detail:'Obtain a 12-lead EKG immediately and hand it to me for interpretation.', category:'imaging', keywords:'ecg ekg 12 lead rhythm STEMI'},
+    {label:'Right-Sided / Posterior EKG', detail:'Obtain right-sided (V4R) and posterior (V7–V9) EKG leads.', category:'imaging', keywords:'right sided posterior ecg inferior MI V4R'},
+    {label:'Portable Chest X-Ray', detail:'Order a portable bedside chest X-ray.', category:'imaging', keywords:'CXR chest xray radiograph'},
+    {label:'Pelvic X-Ray', detail:'Order a portable AP pelvis X-ray.', category:'imaging', keywords:'pelvis xray fracture trauma'},
+    {label:'eFAST Exam', detail:'Perform an eFAST: Morison\'s pouch, splenorenal recess, pelvis, subxiphoid, and bilateral lung sliding.', category:'imaging', keywords:'FAST ultrasound trauma free fluid pneumothorax POCUS'},
+    {label:'Bedside Echo', detail:'Perform a bedside echocardiogram to assess RV strain, effusion, and contractility.', category:'imaging', keywords:'echo POCUS cardiac tamponade RV strain'},
+    {label:'Lung / IVC Ultrasound', detail:'Perform a lung and IVC ultrasound to assess B-lines and volume status.', category:'imaging', keywords:'POCUS lung B-lines IVC volume ultrasound'},
+    {label:'CT Head (non-contrast)', detail:'Order a non-contrast CT of the head.', category:'imaging', keywords:'head CT stroke bleed ICH trauma'},
+    {label:'CT Angiogram Head/Neck', detail:'Order a CT angiogram of the head and neck with perfusion imaging.', category:'imaging', keywords:'CTA stroke LVO dissection perfusion'},
+    {label:'CT Angiogram Chest (PE)', detail:'Order a CT pulmonary angiogram to evaluate for pulmonary embolism.', category:'imaging', keywords:'CTPA PE pulmonary embolism dissection chest'},
+    {label:'CT Abdomen/Pelvis', detail:'Order a CT of the abdomen and pelvis with IV contrast.', category:'imaging', keywords:'CT abdomen pelvis appendicitis contrast'},
+    {label:'Pan-Scan (Trauma)', detail:'Order a trauma pan-scan: CT head, cervical spine, chest, abdomen, and pelvis.', category:'imaging', keywords:'pan scan trauma CT whole body'},
+    {label:'Extremity X-Ray', detail:'Order plain films of the injured extremity in two views.', category:'imaging', keywords:'xray fracture extremity limb'},
+    {label:'Ultrasound (RUQ / Renal / DVT)', detail:'Order a formal ultrasound of the region in question (right upper quadrant, renal, or lower-extremity venous duplex).', category:'imaging', keywords:'ultrasound gallbladder hydronephrosis DVT duplex'},
+  ]},
+  { id:'procedures', title:'Procedures', blurb:'Bedside procedures beyond the immediate resuscitation.', items:[
+    {label:'Chest Tube', detail:'Place a 28 Fr chest tube in the 5th intercostal space and connect it to suction.', category:'procedure', keywords:'thoracostomy tube chest drain hemothorax'},
+    {label:'Lumbar Puncture', detail:'Perform a lumbar puncture at L3-L4 and measure the opening pressure.', category:'procedure', keywords:'LP spinal tap meningitis SAH CSF'},
+    {label:'Fracture / Joint Reduction', detail:'Provide procedural sedation and reduce the fracture or dislocation, then splint and reassess neurovascular status.', category:'procedure', keywords:'reduction dislocation splint orthopedic sedation'},
+    {label:'Procedural Sedation', detail:'Perform procedural sedation with ketamine 1 mg/kg IV, with full monitoring and airway equipment at the bedside.', category:'procedure', keywords:'sedation ketamine propofol procedure'},
+    {label:'Laceration Repair', detail:'Irrigate the wound copiously, explore for foreign body, anesthetize, and close.', category:'procedure', keywords:'suture laceration wound repair irrigation'},
+    {label:'Escharotomy', detail:'Perform an escharotomy for circumferential full-thickness burns compromising perfusion or ventilation.', category:'procedure', keywords:'burn escharotomy circumferential compartment'},
+    {label:'Active Rewarming / Cooling', detail:'Begin active temperature management — warmed IV fluids and forced-air warming, or evaporative cooling with ice packs for heat stroke.', category:'procedure', keywords:'hypothermia hyperthermia rewarming cooling heat stroke'},
+    {label:'Decontamination', detail:'Decontaminate the patient — remove clothing and irrigate copiously — with the team in appropriate PPE.', category:'procedure', keywords:'decon chemical exposure irrigation hazmat'},
+    {label:'Gastric Decontamination', detail:'Give activated charcoal 1 g/kg PO if the airway is protected and the ingestion is recent.', category:'procedure', keywords:'charcoal overdose ingestion decontamination'},
+  ]},
+  { id:'bedside', title:'History & Examination', blurb:'Talk to the patient, examine the patient, collect collateral.', items:[
+    {label:'Focused History', detail:'Take a focused history of the presenting complaint — onset, character, radiation, associated symptoms, and aggravating factors.', category:'history', keywords:'HPI history complaint OPQRST'},
+    {label:'SAMPLE / AMPLE History', detail:'Take an AMPLE history: allergies, medications, past history, last meal, and events surrounding the presentation.', category:'history', keywords:'AMPLE SAMPLE allergies medications past history'},
+    {label:'Collateral History', detail:'Obtain collateral history from EMS, family, or the nursing home.', category:'history', keywords:'collateral EMS family witness bystander'},
+    {label:'Medication & Allergy Review', detail:'Review the medication list and allergies, with particular attention to anticoagulants, beta-blockers, and immunosuppressants.', category:'history', keywords:'medications allergies anticoagulant reconciliation'},
+    {label:'Head-to-Toe Exam', detail:'Perform a complete head-to-toe physical examination.', category:'exam', keywords:'physical exam full head to toe secondary survey'},
+    {label:'Cardiopulmonary Exam', detail:'Examine the heart and lungs — heart sounds, murmurs, JVP, breath sounds, and work of breathing.', category:'exam', keywords:'heart lungs auscultation murmur JVP breath sounds'},
+    {label:'Abdominal Exam', detail:'Examine the abdomen for tenderness, guarding, rebound, distension, and pulsatile mass.', category:'exam', keywords:'abdomen belly peritonitis guarding rebound'},
+    {label:'Neurologic Exam', detail:'Perform a full neurologic exam including cranial nerves, strength, sensation, cerebellar testing, and the NIHSS.', category:'exam', keywords:'neuro exam NIHSS cranial nerves stroke GCS'},
+    {label:'Expose & Log-Roll', detail:'Fully expose the patient and log-roll to inspect the back, flanks, and perineum.', category:'exam', keywords:'expose logroll secondary survey back trauma'},
+    {label:'Skin & Extremity Exam', detail:'Examine the skin for rash, purpura, crepitus, and perfusion, and check distal pulses in all extremities.', category:'exam', keywords:'skin rash purpura pulses perfusion extremity'},
+  ]},
+  { id:'dispo', title:'Consults & Disposition', blurb:'Bring in the specialists and move the patient.', items:[
+    {label:'Surgical Consult', detail:'Consult general/trauma surgery at the bedside now.', category:'consult', keywords:'surgery consult trauma OR'},
+    {label:'Cardiology Consult', detail:'Consult cardiology.', category:'consult', keywords:'cardiology consult cardiac'},
+    {label:'Neurology / Neurosurgery', detail:'Consult neurology and neurosurgery.', category:'consult', keywords:'neurology neurosurgery consult stroke bleed'},
+    {label:'OB/GYN Consult', detail:'Consult obstetrics and gynecology.', category:'consult', keywords:'obstetrics gynecology pregnancy consult'},
+    {label:'Toxicology / Poison Control', detail:'Call the poison control centre and consult medical toxicology.', category:'consult', keywords:'toxicology poison control overdose consult'},
+    {label:'ICU Admission', detail:'Admit the patient to the intensive care unit and call the intensivist.', category:'disposition', keywords:'ICU admit critical care disposition'},
+    {label:'Admit to Floor', detail:'Admit the patient to a monitored medical floor bed.', category:'disposition', keywords:'admit floor telemetry disposition'},
+    {label:'To the OR', detail:'Take the patient directly to the operating room.', category:'disposition', keywords:'OR operating room surgery emergent'},
+    {label:'Transfer / Retrieval', detail:'Arrange transfer to a higher level of care and speak to the accepting physician.', category:'disposition', keywords:'transfer retrieval tertiary accepting'},
+    {label:'Goals of Care Discussion', detail:'Have a goals-of-care conversation with the patient and family and clarify the resuscitation status.', category:'disposition', keywords:'goals of care DNR family palliative code status'},
+    {label:'Discharge with Follow-Up', detail:'Discharge the patient with clear return precautions and arranged follow-up.', category:'disposition', keywords:'discharge home follow up return precautions'},
+  ]},
+];
+const ALL_ORDERS = ORDER_GROUPS.reduce((a,g)=>a.concat(g.items),[]);
+const CRITICAL_ACTIONS = ALL_ORDERS.filter(o=>o.critical);
+const CATEGORY_LABELS = { critical:'Critical Action', medication:'Medication', lab:'Laboratory', imaging:'Imaging', procedure:'Procedure', exam:'Examination', history:'History', consult:'Consult', disposition:'Disposition', other:'Order' };
+const CATEGORY_HINTS = [
+  ['critical', ['tourniquet','pelvic binder','thoracotomy','cricothyro','reboa','massive transfusion','defibrill','needle decompress','cpr','code blue']],
+  ['medication', ['give ','administer','mg','mcg','grams',' iv push','bolus','infusion','drip','start a','antibiotic','epinephrine','ketamine','fentanyl','insulin','naloxone']],
+  ['lab', ['cbc','chem','panel','troponin','lactate','blood gas','culture','urinalysis','d-dimer','inr','crossmatch','level','lab']],
+  ['imaging', ['x-ray','xray','ct ','ekg','ecg','ultrasound','echo','fast','mri','imaging','radiograph']],
+  ['procedure', ['intubat','chest tube','central line','lumbar puncture','catheter','splint','suture','reduce','sedation','place ','insert']],
+  ['exam', ['exam','auscultat','palpat','inspect','listen','look at','vitals']],
+  ['history', ['ask','history','tell me','what happened','collateral','allerg']],
+  ['consult', ['consult','call ','page ','activate']],
+  ['disposition', ['admit','discharge','transfer','operating room','disposition','icu']]
+];
+
+const normOrder = s => (s||'').toLowerCase().replace(/\(.*?\)/g,' ').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+
+/** Find the catalogue order a piece of free text is naming, if any. */
+function matchOrder(text){
+  const raw=(text||'').trim(); if(!raw) return undefined;
+  const byDetail = ALL_ORDERS.find(o=>o.detail===raw); if(byDetail) return byDetail;
+  const t = normOrder(raw);
+  const exact = ALL_ORDERS.find(o=>normOrder(o.label)===t); if(exact) return exact;
+  return ALL_ORDERS.find(o=>{ const l=normOrder(o.label); return l.length>=6 && t.length>=6 && (t.includes(l)||l.includes(t)); });
+}
+/** Map free text (usually a critical action named by the model) onto a catalogue order. */
+function resolveOrderText(text){
+  return matchOrder(text) || { label:text, detail:text, category:'critical', critical:true };
+}
+function classifyOrder(text){
+  const known=matchOrder(text); if(known) return known.category;
+  const t=(text||'').toLowerCase();
+  for(const [cat,terms] of CATEGORY_HINTS){ if(terms.some(x=>t.includes(x))) return cat; }
+  return 'other';
+}
+function labelForOrder(text){
+  const known=matchOrder(text); if(known) return known.label;
+  const clean=(text||'').trim().replace(/\s+/g,' ');
+  return clean.length>60 ? clean.slice(0,57)+'…' : clean;
+}
+function logOrders(action, entries){
+  const time=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  const list = (entries && entries.length) ? entries
+    : [{ label: labelForOrder(action), category: classifyOrder(action) }];
+  S.orderLog = list.map(e=>({ label:e.label, category:e.category||'other', critical:!!e.critical, time })).concat(S.orderLog);
+}
 
 // ===================== MODEL API (OpenAI-compatible) =====================
 async function callModel(messages){
@@ -143,48 +371,59 @@ function normVitals(v){
 }
 
 // ===================== PROMPTS =====================
-const CASE_SYSTEM = `You are a Clinical Simulation Architect that builds high-fidelity emergency-room training cases.
-Respond with ONLY a JSON object of this exact shape:
-{"intro":string,"vitals":{"hr":number,"bpSystolic":number,"bpDiastolic":number,"rr":number,"o2":number,"temp":number,"rhythm":string},"context":string,"diagnosis":string,"learningPoints":[string]}
-Rules: (1) "intro" is a vivid bedside scene with nurse/patient dialogue and the chief complaint — never name the diagnosis or the learning points in it. (2) "context" is the hidden clinical truth (true diagnosis, pathophysiology, expected course, key findings) used by the engine. (3) "diagnosis" is the single hidden correct diagnosis. (4) 3-5 concise "learningPoints". (5) Vitals must fit the presentation. Output JSON only, no prose, no markdown.`;
+const caseSystem = () => { const L = getLevel(S.level); return `You are a Clinical Simulation Architect that builds high-fidelity emergency-room training cases.
 
-const ENGINE_SYSTEM = `You are the Bedside Simulation Engine for an ER trainer. The player is the treating physician. Given the hidden context, the recent transcript, and the player's latest action, respond with ONLY a JSON object of this shape:
+TRAINING LEVEL — ${L.label.toUpperCase()}: ${L.casePrompt}
+Respond with ONLY a JSON object of this exact shape:
+{"intro":string,"vitals":{"hr":number,"bpSystolic":number,"bpDiastolic":number,"rr":number,"o2":number,"temp":number,"rhythm":string},"context":string,"diagnosis":string,"learningPoints":[string],"criticalActions":[string]}
+Rules: (1) "intro" is a vivid bedside scene with nurse/patient dialogue and the chief complaint — never name the diagnosis or the learning points in it. (2) "context" is the hidden clinical truth (true diagnosis, pathophysiology, expected course, key findings) used by the engine. (3) "diagnosis" is the single hidden correct diagnosis. (4) 3-5 concise "learningPoints". (5) "criticalActions" is 4-8 time-critical interventions this patient needs, as short imperative order names a physician would click at the bedside (e.g. "Apply pelvic binder", "Arterial tourniquet", "Activate massive transfusion protocol") — the intervention only, never the diagnosis. (6) Vitals must fit the presentation, and the difficulty must match the training level above. Output JSON only, no prose, no markdown.`; };
+
+const engineSystem = () => { const L = getLevel(S.level); return `You are the Bedside Simulation Engine for an ER trainer.
+
+TRAINING LEVEL — ${L.label.toUpperCase()}. Bedside behaviour: ${L.enginePrompt}
+Debrief marking: ${L.debriefPrompt} The player is the treating physician. Given the hidden context, the recent transcript, and the player's latest action, respond with ONLY a JSON object of this shape:
 {"narrative":string,"updatedVitals":{"hr":number,"bpSystolic":number,"bpDiastolic":number,"rr":number,"o2":number,"temp":number,"rhythm":string},"vitalTrend":"stable"|"improving"|"worsening"|"critical","labResults":[{"name":string,"value":string,"unit":string,"flag":string}],"diagnosticReports":[{"title":string,"body":string}],"physicalExam":[{"system":string,"finding":string}],"clinicalRationale":string,"isCaseOver":boolean,"debrief":{"outcome":string,"score":number,"summary":string,"criticalEvents":[{"event":string,"feedback":string,"type":"positive"|"negative"|"neutral"}],"missedOpportunities":[string],"learningPoints":[string]}}
-Rules: (1) Only include labResults/diagnosticReports/physicalExam the player actually ordered or performed this turn; otherwise use empty arrays. (2) "flag" is "H","L","CRITICAL" or "". (3) Update ALL vitals fields and set vitalTrend from physiology + the player's action. (4) "clinicalRationale" explains WHY things changed. (5) Never reveal the diagnosis directly. (6) Set "isCaseOver" true when the encounter ends (stabilized/admitted, transferred, or death) and fill "debrief" (score 0-100); otherwise "debrief" may be an empty object {}. Output JSON only.`;
+Rules: (1) Only include labResults/diagnosticReports/physicalExam the player actually ordered or performed this turn; otherwise use empty arrays. (2) "flag" is "H","L","CRITICAL" or "". (3) Update ALL vitals fields and set vitalTrend from physiology + the player's action. (4) "clinicalRationale" explains WHY things changed. (5) Never reveal the diagnosis directly. (6) The player may carry several working diagnoses at once and may document or revise that differential mid-case — treat it as their charted reasoning, never confirm or deny it outright, and never let a wrong entry change the underlying truth. (7) The player may send several orders in one action: carry out every one and report the result of each. (8) Set "isCaseOver" true when the encounter ends (stabilized/admitted, transferred, or death) and fill "debrief" (score 0-100), scoring the breadth, ranking, and timing of the differential they documented and marking to the training level above; otherwise "debrief" may be an empty object {}. Output JSON only.`; };
 
 // ===================== ENGINE FLOWS =====================
 async function startCase(topic){
   setLoading(true, 'Generating evidence-based case…');
   try{
     const out = await callModel([
-      {role:'system', content:CASE_SYSTEM},
+      {role:'system', content:caseSystem()},
       {role:'user', content:`Create a complex, realistic ER simulation case on the topic: "${topic}".`}
     ]);
     const c = extractJSON(out);
     S.vitals = normVitals(c.vitals); S.shown = {...S.vitals};
     S.context = c.context||''; S.diagnosis = c.diagnosis||'Unknown';
     S.learningPoints = Array.isArray(c.learningPoints)?c.learningPoints:[];
+    S.criticalActions = Array.isArray(c.criticalActions)?c.criticalActions:[];
     S.messages = [{role:'assistant', content:c.intro||'The patient is at the bedside.'}];
     S.labs=[]; S.reports=[]; S.exam=[]; S.trend='stable'; S.stage='play';
+    S.dx=[]; S.orderLog=[]; S.basket=[]; S.view='sim'; S.orderGroup='critical'; S.orderSearch=''; S.logFilter='all';
+    S.showSuggested = getLevel(S.level).suggestionsExpanded;
     renderPlay();
     speak(c.intro);
   }catch(e){ showError(e.message); }
   finally{ setLoading(false); }
 }
 
-async function progress(action){
+async function progress(action, logEntries){
   if(S.loading) return;
   S.messages.push({role:'user', content:action});
+  logOrders(action, logEntries);
   renderPlay();
   setLoading(true);
   try{
     const transcript = S.messages.slice(-10).map(m=>(m.role==='user'?'DOCTOR':'SIM')+': '+m.content).join('\n');
+    const differential = differentialForPrompt();
     const user = `HIDDEN CONTEXT (never reveal directly): ${S.context}
 LEARNING POINTS: ${S.learningPoints.join('; ')}
 RECENT TRANSCRIPT:
 ${transcript}
+DOCTOR'S DOCUMENTED DIFFERENTIAL: ${differential.length?differential.join('; '):'none documented yet'}
 DOCTOR'S LATEST ACTION: ${action}`;
-    const out = await callModel([{role:'system',content:ENGINE_SYSTEM},{role:'user',content:user}]);
+    const out = await callModel([{role:'system',content:engineSystem()},{role:'user',content:user}]);
     const r = extractJSON(out);
     S.vitals = normVitals(r.updatedVitals);
     S.trend = ['stable','improving','worsening','critical'].includes(r.vitalTrend)?r.vitalTrend:'stable';
@@ -311,6 +550,15 @@ function renderSetup(){
         <h1 class="text-6xl md:text-7xl font-black text-white tracking-tighter mb-3 uppercase italic">MediSim <span class="text-emerald-500 not-italic">ER</span></h1>
         <p class="text-slate-500 text-base">High-fidelity bedside simulation powered by your own model in LM Studio. No keys, no cloud, no cost.</p>
       </div>
+      <div class="bg-slate-900/50 border border-slate-800 rounded-3xl p-7 mb-5">
+        <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Training level</label>
+        <p class="text-[11px] text-slate-500 mt-1 mb-4">Sets how the case is written, how much the team gives away at the bedside, and how the debrief is marked.</p>
+        <div class="grid sm:grid-cols-3 gap-3">
+          ${TRAINING_LEVELS.map(l=>`<button data-lvl="${l.id}" class="lvlBtn text-left p-4 rounded-2xl border transition ${S.level===l.id?'bg-emerald-500/10 border-emerald-500/50':'bg-slate-950/60 border-slate-800 hover:border-slate-700'}">
+            <div class="text-xs font-black uppercase tracking-widest ${S.level===l.id?'text-emerald-400':'text-slate-300'}">${l.label}</div>
+            <p class="text-[11px] text-slate-500 leading-snug mt-1.5">${l.blurb}</p></button>`).join('')}
+        </div>
+      </div>
       <div class="bg-slate-900/50 border border-slate-800 rounded-3xl p-7">
         <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Topic-based case</label>
         <input id="topic" placeholder="e.g. Diabetic Ketoacidosis…" class="w-full mt-2 bg-slate-950 border border-slate-800 rounded-2xl py-4 px-4 text-sm text-white focus:outline-none focus:border-emerald-500/50" />
@@ -325,30 +573,41 @@ function renderSetup(){
   $('genBtn').onclick=()=>{ const t=$('topic').value.trim(); if(t) startCase(t); };
   $('topic').addEventListener('keydown',e=>{ if(e.key==='Enter'){const t=$('topic').value.trim(); if(t) startCase(t);} });
   document.querySelectorAll('.ex').forEach(b=>b.onclick=()=>{ $('topic').value=b.textContent; });
+  document.querySelectorAll('.lvlBtn').forEach(b=>b.onclick=()=>{ S.level=b.dataset.lvl; localStorage.setItem('ms_level',S.level); const t=$('topic').value; renderSetup(); $('topic').value=t; });
   testConnection(true);
 }
 
 // ===================== RENDER: PLAY =====================
-const QUICK=[
-  ['History','Take a focused history from the patient.'],
-  ['Vitals','Recheck a full set of vital signs.'],
-  ['Exam','Perform a focused physical examination.'],
-  ['EKG','Obtain a 12-lead EKG.'],
-  ['Labs','Order CBC, CMP, troponin, and a venous blood gas.'],
-  ['CXR','Order a portable chest X-ray.'],
-  ['IV / O2','Establish IV access, place on O2 and monitor.'],
+const QUICK = [
+  'Focused History','Head-to-Toe Exam','Recheck Full Vitals','12-Lead EKG',
+  'Two Large-Bore IVs','CBC + Differential','Portable Chest X-Ray','eFAST Exam'
+].map(l => ALL_ORDERS.find(o => o.label === l)).filter(Boolean);
+
+const TABS = [
+  { id:'sim',    label:'Sim Room',  accent:'emerald' },
+  { id:'orders', label:'Orders',    accent:'emerald' },
+  { id:'dx',     label:'Diagnosis', accent:'fuchsia' },
+  { id:'chart',  label:'Chart',     accent:'blue'    }
 ];
+
+function tabCount(id){
+  if(id==='orders') return S.orderLog.length;
+  if(id==='dx') return S.dx.filter(d=>d.confidence!=='ruled-out').length;
+  if(id==='chart') return S.labs.length + S.reports.length + S.exam.length + S.orderLog.length;
+  return 0;
+}
+
 function renderPlay(){
   main.innerHTML=`
   <!-- monitor -->
   <div class="bg-[#0f172a]/90 border-b border-slate-800 p-3 md:p-4 shrink-0">
-    <div class="max-w-[1500px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-3 md:gap-5">
-      <div class="lg:col-span-4 bg-black border border-slate-700/50 rounded-xl h-[90px] md:h-[120px] relative overflow-hidden">
+    <div class="max-w-[1500px] mx-auto grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-5">
+      <div class="md:col-span-4 bg-black border border-slate-700/50 rounded-xl h-[90px] md:h-[120px] relative overflow-hidden">
         <div class="absolute top-2 left-3 z-10"><span class="text-[9px] font-black text-emerald-500/50 uppercase tracking-[.3em]">Lead II</span></div>
         <canvas id="ecg" class="w-full h-full"></canvas>
         <div id="v_trend" class="absolute top-2 right-3"></div>
       </div>
-      <div class="lg:col-span-8 grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+      <div class="md:col-span-8 grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
         ${vbox('Heart Rate','v_hr','bpm')}
         ${vbox('Blood Pressure','v_bp','mmHg')}
         ${vbox('SpO₂','v_o2','%')}
@@ -360,41 +619,361 @@ function renderPlay(){
       <span class="text-[9px] text-slate-600 font-black uppercase tracking-widest">Rhythm: <span id="v_rhythm"></span></span>
     </div>
   </div>
+  <!-- workspace tabs -->
+  <div class="shrink-0 border-b border-slate-900 bg-slate-950/70 px-2 md:px-5">
+    <div id="tabs" class="flex items-stretch gap-1 md:gap-2 overflow-x-auto"></div>
+  </div>
   <!-- body -->
-  <div class="flex-1 flex overflow-hidden">
-    <div class="flex-1 flex flex-col border-r border-slate-900 min-w-0">
-      <div id="chat" class="flex-1 overflow-y-auto p-3 md:p-5 space-y-4"></div>
-      <div class="border-t border-slate-900 p-3 md:p-4 bg-slate-950/70">
-        <div class="flex flex-wrap gap-2 mb-3">
-          ${QUICK.map((q,i)=>`<button data-q="${i}" class="qa px-3 py-1.5 bg-slate-900/60 border border-slate-800 rounded-lg text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-emerald-400 hover:border-emerald-500/30 transition">${q[0]}</button>`).join('')}
-        </div>
-        <div class="flex items-end gap-2">
-          <textarea id="cmd" rows="1" placeholder="Enter an order or action…" class="flex-1 bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500/50 max-h-32"></textarea>
-          <button id="micBtn" class="p-3 rounded-2xl bg-slate-900 border border-slate-800 text-slate-500 hover:text-emerald-400 transition" title="Dictate">
-            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4"/></svg>
-          </button>
-          <button id="sendBtn" class="p-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white transition">
-            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
-          </button>
-        </div>
-      </div>
-    </div>
-    <aside class="hidden md:block w-[340px] overflow-y-auto p-5 space-y-6 bg-slate-950/60 shrink-0">
+  <div class="flex-1 flex overflow-hidden min-h-0">
+    <div id="viewBody" class="flex-1 flex flex-col border-r border-slate-900 min-w-0 min-h-0 overflow-hidden"></div>
+    <aside class="hidden xl:block w-[340px] overflow-y-auto p-5 space-y-6 bg-slate-950/60 shrink-0">
       <h3 class="text-[10px] font-black uppercase tracking-[.3em] text-slate-500 border-b border-slate-800 pb-3">Clinical Workspace</h3>
       <div id="ws"></div>
     </aside>
   </div>`;
-  // wire
   startECG($('ecg')); startDrift(); paintVitals();
-  renderChat(); renderWorkspace();
+  renderTabs(); renderView(); renderWorkspace();
+}
+
+function renderTabs(){
+  const el = $('tabs'); if(!el) return;
+  el.innerHTML = TABS.map(t=>{
+    const on = S.view===t.id, n = tabCount(t.id);
+    const border = on ? (t.accent==='fuchsia'?'border-fuchsia-500':t.accent==='blue'?'border-blue-500':'border-emerald-500') : 'border-transparent';
+    return `<button data-tab="${t.id}" class="tabBtn relative flex items-center gap-2 px-3 md:px-5 py-3 whitespace-nowrap border-b-2 ${border} ${on?'text-white':'text-slate-500 hover:text-slate-300'} transition">
+      <span class="text-[10px] md:text-[11px] font-black uppercase tracking-[.2em]">${t.label}</span>
+      ${n?`<span class="text-[9px] font-black px-1.5 py-0.5 rounded-md ${on?'bg-slate-800 text-slate-200':'bg-slate-900 text-slate-500'}">${n}</span>`:''}
+    </button>`;
+  }).join('');
+  el.querySelectorAll('.tabBtn').forEach(b=>b.onclick=()=>{ S.view=b.dataset.tab; renderTabs(); renderView(); });
+}
+
+function renderView(){
+  if(S.view==='orders') return renderOrders();
+  if(S.view==='dx') return renderDx();
+  if(S.view==='chart') return renderChartView();
+  return renderSim();
+}
+
+function backBtn(){
+  return `<button id="backBtn" class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-emerald-400 hover:border-emerald-500/40 transition shrink-0">
+    <span class="text-[10px] font-black uppercase tracking-widest">← Back to Sim Room</span></button>`;
+}
+function wireBack(){
+  const b=$('backBtn'); if(b) b.onclick=()=>{ S.view='sim'; renderTabs(); renderView(); };
+}
+
+// ---------- SIM ROOM ----------
+function renderSim(){
+  const crit = criticalRow();
+  $('viewBody').innerHTML=`
+    <div id="chat" class="flex-1 min-h-0 overflow-y-auto p-3 md:p-5 space-y-4"></div>
+    <div class="border-t border-slate-900 p-3 md:p-4 bg-slate-950/70 space-y-3">
+      <div>
+        <button id="critToggle" class="text-[9px] font-black uppercase tracking-[.2em] text-red-500/80 hover:text-red-400 mb-1.5 transition">⚠ Critical Actions ${S.showSuggested?'▾':'▸'}</button>
+        <div class="flex gap-2 overflow-x-auto pb-1 ${S.showSuggested?'':'hidden'}">
+          ${crit.map((o,i)=>`<button data-crit="${i}" class="ca whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 bg-red-500/[.06] hover:bg-red-500/15 border border-red-500/25 hover:border-red-500/60 rounded-xl text-[9px] md:text-[10px] font-black uppercase tracking-widest text-red-300 transition" title="${esc(o.detail)}">${esc(o.label)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="flex gap-2 items-center">
+        <div class="flex gap-2 overflow-x-auto pb-1 flex-1 min-w-0">
+          ${QUICK.map((o,i)=>`<button data-q="${i}" class="qa whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 bg-slate-900/60 border border-slate-800 rounded-lg text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-emerald-400 hover:border-emerald-500/30 transition" title="${esc(o.detail)}">${esc(o.label)}</button>`).join('')}
+        </div>
+        <button id="allOrders" class="shrink-0 whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-[10px] font-black uppercase tracking-widest text-emerald-400 hover:bg-emerald-500/20 transition">All Orders</button>
+      </div>
+      <div class="flex items-end gap-2">
+        <textarea id="cmd" rows="1" placeholder="Enter an order or action…" class="flex-1 bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500/50 max-h-32"></textarea>
+        <button id="micBtn" class="p-3 rounded-2xl bg-slate-900 border border-slate-800 text-slate-500 hover:text-emerald-400 transition" title="Dictate">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4"/></svg>
+        </button>
+        <button id="sendBtn" class="p-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white transition">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+        </button>
+      </div>
+    </div>`;
+  renderChat();
   const cmd=$('cmd');
   const send=()=>{ const t=cmd.value.trim(); if(t&&!S.loading){ cmd.value=''; cmd.style.height='auto'; progress(t);} };
   $('sendBtn').onclick=send;
   cmd.addEventListener('input',()=>{cmd.style.height='auto';cmd.style.height=Math.min(cmd.scrollHeight,128)+'px';});
   cmd.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();} });
-  document.querySelectorAll('.qa').forEach(b=>b.onclick=()=>{ if(!S.loading) progress(QUICK[+b.dataset.q][1]); });
+  document.querySelectorAll('.qa').forEach(b=>b.onclick=()=>{ if(!S.loading) placeOrders([QUICK[+b.dataset.q]]); });
+  document.querySelectorAll('.ca').forEach(b=>b.onclick=()=>{ if(!S.loading) placeOrders([crit[+b.dataset.crit]]); });
+  $('critToggle').onclick=()=>{ S.showSuggested=!S.showSuggested; renderSim(); };
+  $('allOrders').onclick=()=>{ S.view='orders'; renderTabs(); renderView(); };
   $('micBtn').onclick=startDictation;
 }
+
+// ---------- ORDERS ----------
+function suggestedOrders(){
+  const seen=new Set();
+  return (S.criticalActions||[]).map(resolveOrderText).filter(o=>{
+    const k=o.label.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true;
+  });
+}
+function criticalRow(){
+  const sug=suggestedOrders(), seen=new Set(sug.map(o=>o.label.toLowerCase()));
+  return sug.concat(CRITICAL_ACTIONS.filter(o=>!seen.has(o.label.toLowerCase())));
+}
+
+function orderCard(o, idx){
+  const sel = S.basket.some(b=>b.label===o.label);
+  const base = o.critical
+    ? 'bg-red-500/[.04] border-red-500/25 hover:border-red-500/60'
+    : 'bg-slate-900/50 border-slate-800 hover:border-emerald-500/40';
+  const selCls = sel ? (o.critical?'!border-red-500 bg-red-500/10':'!border-emerald-500 bg-emerald-500/10') : '';
+  return `<div class="relative rounded-2xl border ${base} ${selCls} overflow-hidden">
+    <button data-ord="${idx}" class="ordBtn w-full text-left p-3 pr-11">
+      <div class="flex items-center gap-2">${o.critical?'<span class="text-red-500 text-[10px]">⚠</span>':''}
+        <span class="text-xs font-bold leading-tight ${o.critical?'text-red-200':'text-slate-200'}">${esc(o.label)}</span></div>
+      <p class="text-[10px] text-slate-500 mt-1 leading-snug line-clamp-2">${esc(o.detail)}</p>
+    </button>
+    <span class="absolute top-2 right-2 w-6 h-6 rounded-lg border flex items-center justify-center text-xs ${sel?(o.critical?'bg-red-500 border-red-500 text-white':'bg-emerald-500 border-emerald-500 text-white'):'border-slate-700 text-slate-700'}">${sel?'✓':'+'}</span>
+    <button data-stat="${idx}" class="statBtn absolute bottom-2 right-2 px-2 py-1 rounded-lg border border-slate-800 bg-slate-950 text-[9px] font-black uppercase tracking-widest text-slate-600 hover:text-yellow-400 hover:border-yellow-500/50 transition" title="Send this one immediately">Stat</button>
+  </div>`;
+}
+
+/** Search results, or the active group — split into the case-specific suggestions and the rest. */
+function visibleOrders(){
+  const q=(S.orderSearch||'').trim().toLowerCase();
+  if(q){
+    const seen=new Set();
+    const hits = suggestedOrders().concat(ALL_ORDERS).filter(o=>{
+      const k=o.label.toLowerCase(); if(seen.has(k)) return false; seen.add(k);
+      return o.label.toLowerCase().includes(q) || o.detail.toLowerCase().includes(q) || (o.keywords||'').toLowerCase().includes(q);
+    });
+    return { suggested:[], rest:hits, blurb:`${hits.length} matching order${hits.length===1?'':'s'}` };
+  }
+  const sug=suggestedOrders(), shown=new Set(sug.map(o=>o.label.toLowerCase()));
+  const g=ORDER_GROUPS.find(g=>g.id===S.orderGroup) || ORDER_GROUPS[0];
+  // Only drop the suggestions from the critical list while the strip is showing
+  // them; collapsed, they must stay reachable in the catalogue.
+  const rest = g.id==='critical'
+    ? (S.showSuggested ? CRITICAL_ACTIONS.filter(o=>!shown.has(o.label.toLowerCase())) : CRITICAL_ACTIONS)
+    : g.items;
+  return { suggested:sug, rest, blurb:g.blurb };
+}
+
+function renderOrders(){
+  $('viewBody').innerHTML=`
+    <div class="px-4 md:px-6 pt-4 pb-3 border-b border-slate-900 shrink-0 space-y-3">
+      <div class="flex items-center justify-between gap-4">
+        <div>
+          <h2 class="text-base font-black uppercase italic tracking-tight">Order <span class="text-emerald-500 not-italic">Entry</span></h2>
+          <p class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Tap to build an order set · Stat sends one now</p>
+        </div>
+        ${backBtn()}
+      </div>
+      <input id="ordSearch" value="${esc(S.orderSearch||'')}" placeholder="Search every order — pelvic binder, tourniquet, TXA, troponin…" class="w-full bg-slate-950 border border-slate-800 rounded-2xl py-3 px-4 text-sm focus:outline-none focus:border-emerald-500/50" />
+      <div class="flex flex-wrap gap-2">
+        ${ORDER_GROUPS.map(g=>`<button data-grp="${g.id}" class="grpBtn px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition ${S.orderGroup===g.id?(g.id==='critical'?'bg-red-500/15 border-red-500/50 text-red-300':'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'):'bg-slate-900/50 border-slate-800 text-slate-500 hover:text-slate-300'}">${g.title}</button>`).join('')}
+      </div>
+    </div>
+    <div class="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 space-y-5" id="ordScroll">
+      <div id="sugWrap" class="space-y-2"></div>
+      <div id="listBlurb" class="text-[11px] text-slate-500"></div>
+      <div id="ordList" class="grid gap-2 sm:grid-cols-2 2xl:grid-cols-3"></div>
+    </div>
+    <div id="basketBar" class="shrink-0 z-[70]"></div>`;
+  wireBack();
+  paintOrders();
+  const search=$('ordSearch');
+  search.addEventListener('input',()=>{ S.orderSearch=search.value; paintOrders(); });
+  document.querySelectorAll('.grpBtn').forEach(b=>b.onclick=()=>{ S.orderGroup=b.dataset.grp; S.orderSearch=''; renderOrders(); });
+}
+
+function paintOrders(){
+  const { suggested, rest, blurb } = visibleOrders();
+  const list = suggested.concat(rest);   // one index space across both grids
+  $('sugWrap').innerHTML = suggested.length
+    ? `<button id="sugToggle" class="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 transition">⚡ Suggested for this patient <span class="text-slate-600">${S.showSuggested?'▾':`▸ ${suggested.length} hidden`}</span></button>
+       <div class="grid gap-2 sm:grid-cols-2 2xl:grid-cols-3 ${S.showSuggested?'':'hidden'}">${suggested.map((o,i)=>orderCard(o,i)).join('')}</div>` : '';
+  const sugToggle=$('sugToggle');
+  if(sugToggle) sugToggle.onclick=()=>{ S.showSuggested=!S.showSuggested; paintOrders(); };
+  $('listBlurb').textContent = blurb || '';
+  $('ordList').innerHTML = rest.length
+    ? rest.map((o,i)=>orderCard(o,i+suggested.length)).join('')
+    : `<p class="text-xs text-slate-600 col-span-full">Nothing matched. Anything not in the catalogue can still be typed as a free-text order in the sim room.</p>`;
+  document.querySelectorAll('.ordBtn').forEach(b=>b.onclick=()=>toggleBasket(list[+b.dataset.ord]));
+  document.querySelectorAll('.statBtn').forEach(b=>b.onclick=()=>{ const o=list[+b.dataset.stat]; S.basket=S.basket.filter(x=>x.label!==o.label); placeOrders([o]); });
+  paintBasket();
+}
+
+function toggleBasket(o){
+  if(!o) return;
+  S.basket = S.basket.some(b=>b.label===o.label) ? S.basket.filter(b=>b.label!==o.label) : S.basket.concat([o]);
+  paintOrders();
+}
+
+function paintBasket(){
+  const bar=$('basketBar'); if(!bar) return;
+  if(!S.basket.length){ bar.innerHTML=''; return; }
+  bar.innerHTML=`<div class="border-t-2 border-emerald-500/40 bg-slate-950/98 p-4 md:px-6 space-y-3 shadow-[0_-16px_40px_rgba(2,6,23,.9)]">
+    <div class="flex items-center justify-between">
+      <span class="text-[10px] font-black uppercase tracking-widest text-slate-500">Order set · ${S.basket.length} item${S.basket.length===1?'':'s'}</span>
+      <button id="clearBasket" class="text-[10px] font-black uppercase tracking-widest text-slate-600 hover:text-red-400 transition">Clear</button>
+    </div>
+    <div class="flex flex-wrap gap-2">${S.basket.map((o,i)=>`<button data-rm="${i}" class="rmBtn px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border ${o.critical?'bg-red-500/10 border-red-500/40 text-red-300':'bg-slate-900 border-slate-700 text-slate-300'}">${esc(o.label)} ×</button>`).join('')}</div>
+    <button id="signBtn" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-2xl transition">Sign &amp; send ${S.basket.length} order${S.basket.length===1?'':'s'}</button>
+  </div>`;
+  $('clearBasket').onclick=()=>{ S.basket=[]; paintOrders(); };
+  document.querySelectorAll('.rmBtn').forEach(b=>b.onclick=()=>{ S.basket.splice(+b.dataset.rm,1); paintOrders(); });
+  $('signBtn').onclick=()=>{ const o=S.basket; S.basket=[]; placeOrders(o); };
+}
+
+/** Send one or more catalogue orders as a single signed action. */
+function placeOrders(orders){
+  orders=(orders||[]).filter(Boolean);
+  if(!orders.length||S.loading) return;
+  const text = orders.length===1 ? orders[0].detail
+    : 'Order set — carry these out now:\n' + orders.map((o,i)=>`${i+1}. ${o.detail}`).join('\n');
+  S.view='sim'; renderTabs(); renderView();
+  progress(text, orders.map(o=>({label:o.label, category:o.category, critical:!!o.critical})));
+}
+
+// ---------- DIAGNOSIS ----------
+const COMMON_DX = ['Acute coronary syndrome','Pulmonary embolism','Aortic dissection','Septic shock','Hemorrhagic shock','Tension pneumothorax','Cardiac tamponade','Diabetic ketoacidosis','Acute stroke','Subarachnoid hemorrhage','Anaphylaxis','GI bleed','Ruptured AAA','Ectopic pregnancy','Bowel obstruction','Meningitis','Status epilepticus','Toxic ingestion'];
+const CONF = [['leading','Leading'],['considering','Considering'],['ruled-out','Ruled out']];
+
+function renderDx(){
+  const active=S.dx.filter(d=>d.confidence!=='ruled-out');
+  $('viewBody').innerHTML=`
+    <div class="px-4 md:px-6 pt-4 pb-3 border-b border-slate-900 shrink-0 flex items-center justify-between gap-4">
+      <div>
+        <h2 class="text-base font-black uppercase italic tracking-tight">Working <span class="text-fuchsia-500 not-italic">Differential</span></h2>
+        <p class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Add as many diagnoses as you are carrying — rank and rule out as data returns</p>
+      </div>
+      ${backBtn()}
+    </div>
+    <div class="flex-1 min-h-0 overflow-y-auto p-4 md:p-6">
+      <div class="max-w-3xl mx-auto space-y-5">
+        <div class="flex gap-2">
+          <input id="dxInput" placeholder="Add a diagnosis to the differential…" class="flex-1 bg-slate-950 border border-slate-800 rounded-2xl py-3.5 px-4 text-sm focus:outline-none focus:border-fuchsia-500/50" />
+          <button id="dxAdd" class="px-5 rounded-2xl bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-[10px] font-black uppercase tracking-widest transition">Add</button>
+        </div>
+        <div class="text-[10px] font-black uppercase tracking-widest text-slate-500">Differential · ${active.length} active</div>
+        <div class="space-y-2">
+          ${S.dx.length ? S.dx.map((d,i)=>`
+            <div class="flex items-center gap-3 p-3 rounded-2xl border ${d.confidence==='leading'?'bg-fuchsia-500/[.07] border-fuchsia-500/40':d.confidence==='ruled-out'?'bg-slate-900/30 border-slate-800/60':'bg-slate-900/50 border-slate-800'}">
+              <div class="flex-1 min-w-0">
+                <span class="text-sm font-bold ${d.confidence==='ruled-out'?'text-slate-600 line-through':'text-slate-100'}">${esc(d.name)}</span>
+                ${d.submitted?'<span class="text-[9px] font-black uppercase tracking-widest text-emerald-500/80 ml-2">✓ Charted</span>':''}
+              </div>
+              <div class="flex gap-1 shrink-0">
+                ${CONF.map(([c,lbl])=>`<button data-dx="${i}" data-conf="${c}" class="confBtn px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border transition ${d.confidence===c?(c==='ruled-out'?'bg-slate-800 border-slate-700 text-slate-400':'bg-fuchsia-500/15 border-fuchsia-500/40 text-fuchsia-300'):'bg-slate-950 border-slate-800 text-slate-600 hover:text-slate-300'}">${lbl}</button>`).join('')}
+                <button data-rmdx="${i}" class="rmDx px-2 py-1.5 rounded-lg text-slate-700 hover:text-red-400 transition">×</button>
+              </div>
+            </div>`).join('')
+            : `<p class="text-xs text-slate-600 leading-relaxed py-2">Nothing on the differential yet. Add every diagnosis you are genuinely carrying — the debrief scores the breadth of your differential, not just the final answer.</p>`}
+        </div>
+        <div class="space-y-2">
+          <div class="text-[10px] font-black uppercase tracking-widest text-slate-500">Common ER differentials</div>
+          <div class="flex flex-wrap gap-2">
+            ${COMMON_DX.filter(n=>!S.dx.some(d=>d.name.toLowerCase()===n.toLowerCase())).map(n=>`<button data-add="${esc(n)}" class="addDx px-3 py-1.5 rounded-xl bg-slate-900/50 border border-slate-800 text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-fuchsia-400 hover:border-fuchsia-500/30 transition">+ ${esc(n)}</button>`).join('')}
+          </div>
+        </div>
+        <button id="dxDoc" class="w-full bg-fuchsia-600 hover:bg-fuchsia-500 disabled:opacity-30 text-white font-bold py-4 rounded-2xl transition" ${active.length?'':'disabled'}>Document differential in the chart</button>
+        <p class="text-[11px] text-slate-600 text-center leading-relaxed">Documenting tells the team what you are thinking, drives the engine's responses, and is what the debrief grades your differential against. You can revise it as often as you like.</p>
+      </div>
+    </div>`;
+  wireBack();
+  const input=$('dxInput');
+  const add=()=>{ if(addDx(input.value)) { input.value=''; renderDx(); renderTabs(); } };
+  $('dxAdd').onclick=add;
+  input.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); add(); } });
+  document.querySelectorAll('.addDx').forEach(b=>b.onclick=()=>{ addDx(b.dataset.add); renderDx(); renderTabs(); });
+  document.querySelectorAll('.confBtn').forEach(b=>b.onclick=()=>{ setConfidence(+b.dataset.dx, b.dataset.conf); renderDx(); renderTabs(); renderWorkspace(); });
+  document.querySelectorAll('.rmDx').forEach(b=>b.onclick=()=>{ S.dx.splice(+b.dataset.rmdx,1); renderDx(); renderTabs(); renderWorkspace(); });
+  $('dxDoc').onclick=documentDifferential;
+}
+
+function addDx(name){
+  const clean=(name||'').trim();
+  if(!clean || S.dx.some(d=>d.name.toLowerCase()===clean.toLowerCase())) return false;
+  S.dx.push({ name:clean, confidence: S.dx.length?'considering':'leading', submitted:false });
+  return true;
+}
+function setConfidence(i, conf){
+  if(!S.dx[i]) return;
+  // Only one diagnosis can lead the differential at a time.
+  if(conf==='leading') S.dx.forEach(d=>{ if(d.confidence==='leading') d.confidence='considering'; });
+  S.dx[i].confidence=conf;
+}
+function documentDifferential(){
+  const active=S.dx.filter(d=>d.confidence!=='ruled-out');
+  if(!active.length||S.loading) return;
+  const leading=active.filter(d=>d.confidence==='leading').map(d=>d.name);
+  const rest=active.filter(d=>d.confidence!=='leading').map(d=>d.name);
+  const out=S.dx.filter(d=>d.confidence==='ruled-out').map(d=>d.name);
+  const parts=[
+    leading.length?`Leading diagnosis: ${leading.join(', ')}.`:'',
+    rest.length?`Also actively considering: ${rest.join('; ')}.`:'',
+    out.length?`Considered and ruled out: ${out.join('; ')}.`:''
+  ].filter(Boolean);
+  S.dx.forEach(d=>d.submitted=true);
+  S.view='sim'; renderTabs(); renderView();
+  progress('Documenting my working differential. '+parts.join(' '),
+    [{label:`Differential — ${active.length} dx`, category:'other'}]);
+}
+function differentialForPrompt(){
+  return S.dx.filter(d=>d.confidence!=='ruled-out')
+    .map(d=>d.confidence==='leading'?`${d.name} (leading)`:d.name);
+}
+
+// ---------- CHART ----------
+const LOG_FILTERS=[['all','All'],['medication','Meds'],['lab','Labs'],['imaging','Imaging'],['procedure','Procedures'],['critical','Critical']];
+const LOG_DOT={critical:'bg-red-500',medication:'bg-purple-500',lab:'bg-yellow-500',imaging:'bg-emerald-500',procedure:'bg-blue-500',exam:'bg-blue-400',history:'bg-slate-400',consult:'bg-cyan-500',disposition:'bg-orange-500',other:'bg-slate-500'};
+const LOG_TEXT={critical:'text-red-400',medication:'text-purple-400',lab:'text-yellow-400',imaging:'text-emerald-400',procedure:'text-blue-400',exam:'text-blue-300',history:'text-slate-300',consult:'text-cyan-400',disposition:'text-orange-400',other:'text-slate-400'};
+
+function chartHTML(){
+  let h='';
+  if(S.dx.length){
+    h+=section('Working Differential','fuchsia', `<div class="flex flex-wrap gap-2">${S.dx.map(d=>`<span class="px-3 py-1.5 rounded-xl text-xs font-bold border ${d.confidence==='leading'?'bg-fuchsia-500/10 border-fuchsia-500/40 text-fuchsia-300':d.confidence==='ruled-out'?'bg-slate-900/40 border-slate-800 text-slate-600 line-through':'bg-slate-900/60 border-slate-700 text-slate-300'}">${d.confidence==='leading'?'<span class="text-[9px] uppercase tracking-widest mr-1">Leading ·</span>':''}${esc(d.name)}</span>`).join('')}</div>`);
+  }
+  if(S.orderLog.length){
+    const shown = S.logFilter==='all' ? S.orderLog
+      : S.logFilter==='critical' ? S.orderLog.filter(o=>o.critical||o.category==='critical')
+      : S.orderLog.filter(o=>o.category===S.logFilter);
+    h+=section('Orders & Meds Given','purple',
+      `<div class="flex flex-wrap gap-1.5 mb-2">${LOG_FILTERS.map(([id,lbl])=>`<button data-lf="${id}" class="lfBtn px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border transition ${S.logFilter===id?'bg-purple-500/15 border-purple-500/40 text-purple-300':'bg-slate-900/50 border-slate-800 text-slate-600 hover:text-slate-300'}">${lbl}</button>`).join('')}</div>
+       <div class="bg-slate-900/40 rounded-xl divide-y divide-slate-800/50">${
+        shown.length ? shown.map(o=>`<div class="px-3 py-2.5 flex items-start gap-2">
+          <span class="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${LOG_DOT[o.category]||LOG_DOT.other}"></span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-baseline justify-between gap-2"><span class="text-xs font-bold text-slate-200 truncate">${esc(o.label)}</span><span class="text-[9px] mono text-slate-600 shrink-0">${o.time}</span></div>
+            <span class="text-[9px] font-black uppercase tracking-widest ${LOG_TEXT[o.category]||LOG_TEXT.other}">${esc(CATEGORY_LABELS[o.category]||'Order')}</span>
+          </div></div>`).join('')
+        : '<p class="px-3 py-2.5 text-xs text-slate-600">Nothing in this category yet.</p>'}</div>`);
+  }
+  if(S.exam.length){ h+=section('Physical Exam','blue', S.exam.map(e=>`<div class="p-3 bg-slate-900/40 rounded-xl border-l-2 border-blue-600"><span class="text-[9px] font-black text-slate-500 uppercase tracking-widest">${esc(e.system)}</span><p class="text-sm text-slate-200 mt-1">${esc(e.finding)}</p></div>`).join('')); }
+  if(S.reports.length){ h+=section('Imaging','emerald', S.reports.map(r=>`<div class="p-3 bg-slate-900/40 rounded-xl border-l-2 border-emerald-600"><span class="text-[9px] font-black text-emerald-400 uppercase tracking-widest">${esc(r.title)}</span><p class="text-sm text-slate-200 mt-1">${esc(r.body)}</p></div>`).join('')); }
+  if(S.labs.length){ h+=section('Laboratory','yellow', `<div class="bg-slate-900/40 rounded-xl divide-y divide-slate-800/50">${S.labs.map(l=>`<div class="flex justify-between px-3 py-2"><span class="text-xs text-slate-300">${esc(l.name)}</span><span class="text-xs font-bold ${l.flag?'text-red-500':'text-emerald-500'}">${esc(String(l.value))} <span class="text-[9px] text-slate-600 uppercase">${esc(l.unit||'')}</span></span></div>`).join('')}</div>`); }
+  return h;
+}
+
+function wireLogFilters(){
+  document.querySelectorAll('.lfBtn').forEach(b=>b.onclick=()=>{ S.logFilter=b.dataset.lf; renderWorkspace(); if(S.view==='chart') renderChartView(); });
+}
+
+function renderWorkspace(){
+  const ws=$('ws'); if(!ws) return;
+  ws.innerHTML = chartHTML() || `<p class="text-xs text-slate-600">Order labs, imaging, or an exam to populate the chart.</p>`;
+  wireLogFilters();
+}
+
+function renderChartView(){
+  $('viewBody').innerHTML=`
+    <div class="px-4 md:px-6 pt-4 pb-3 border-b border-slate-900 shrink-0 flex items-center justify-between gap-4">
+      <div>
+        <h2 class="text-base font-black uppercase italic tracking-tight">Patient <span class="text-blue-500 not-italic">Chart</span></h2>
+        <p class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Orders &amp; meds given · exam · imaging · labs</p>
+      </div>
+      ${backBtn()}
+    </div>
+    <div class="flex-1 min-h-0 overflow-y-auto p-4 md:p-6"><div class="max-w-3xl mx-auto">${chartHTML() || '<p class="text-xs text-slate-600">The chart is empty. Place an order, examine the patient, or document a differential and everything you do will collect here.</p>'}</div></div>`;
+  wireBack(); wireLogFilters();
+}
+
 function vbox(label,id,unit){
   return `<div class="bg-slate-900/40 border border-slate-800/50 rounded-2xl p-2 md:p-3 flex flex-col justify-between">
     <span class="text-[8px] md:text-[10px] font-black uppercase tracking-widest text-slate-500">${label}</span>
@@ -404,7 +983,7 @@ function vbox(label,id,unit){
 function renderChat(){
   const c=$('chat'); if(!c) return;
   c.innerHTML=S.messages.map(m=>{
-    if(m.role==='user') return `<div class="flex justify-end fade"><div class="max-w-[80%] bg-blue-600/10 border border-blue-500/20 rounded-3xl rounded-tr-none p-4 text-sm text-blue-100">${esc(m.content)}</div></div>`;
+    if(m.role==='user') return `<div class="flex justify-end fade"><div class="max-w-[80%] bg-blue-600/10 border border-blue-500/20 rounded-3xl rounded-tr-none p-4 text-sm text-blue-100 whitespace-pre-wrap">${esc(m.content)}</div></div>`;
     return `<div class="flex gap-3 fade"><div class="w-9 h-9 rounded-2xl bg-emerald-600/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500 shrink-0">
       <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg></div>
       <div class="max-w-[80%] bg-slate-900/80 border border-slate-800 rounded-3xl rounded-tl-none p-4 text-sm text-slate-200">
@@ -413,14 +992,6 @@ function renderChat(){
       </div></div>`;
   }).join('') + (S.loading?`<div class="flex gap-3"><div class="w-9 h-9 rounded-2xl bg-emerald-600/10 border border-emerald-500/20 flex items-center justify-center"><span class="w-2 h-2 bg-emerald-500 rounded-full pulse-dot"></span></div><div class="bg-slate-900/50 border border-slate-800 rounded-2xl px-4 py-3 text-[10px] text-emerald-500 font-black uppercase tracking-widest">Processing clinical logic…</div></div>`:'');
   c.scrollTop=c.scrollHeight;
-}
-function renderWorkspace(){
-  const ws=$('ws'); if(!ws) return;
-  let h='';
-  if(S.exam.length){ h+=section('Physical Exam','blue', S.exam.map(e=>`<div class="p-3 bg-slate-900/40 rounded-xl border-l-2 border-blue-600"><span class="text-[9px] font-black text-slate-500 uppercase tracking-widest">${esc(e.system)}</span><p class="text-sm text-slate-200 mt-1">${esc(e.finding)}</p></div>`).join('')); }
-  if(S.reports.length){ h+=section('Imaging','emerald', S.reports.map(r=>`<div class="p-3 bg-slate-900/40 rounded-xl border-l-2 border-emerald-600"><span class="text-[9px] font-black text-emerald-400 uppercase tracking-widest">${esc(r.title)}</span><p class="text-sm text-slate-200 mt-1">${esc(r.body)}</p></div>`).join('')); }
-  if(S.labs.length){ h+=section('Laboratory','yellow', `<div class="bg-slate-900/40 rounded-xl divide-y divide-slate-800/50">${S.labs.map(l=>`<div class="flex justify-between px-3 py-2"><span class="text-xs text-slate-300">${esc(l.name)}</span><span class="text-xs font-bold ${l.flag?'text-red-500':'text-emerald-500'}">${esc(String(l.value))} <span class="text-[9px] text-slate-600 uppercase">${esc(l.unit||'')}</span></span></div>`).join('')}</div>`); }
-  ws.innerHTML = h || `<p class="text-xs text-slate-600">Order labs, imaging, or an exam to populate the chart.</p>`;
 }
 function section(title,color,inner){ return `<div class="space-y-2 mb-6"><div class="text-[10px] font-black uppercase tracking-widest text-${color}-500">${title}</div>${inner}</div>`; }
 
@@ -434,10 +1005,20 @@ function renderDebrief(){
     <div class="max-w-3xl mx-auto fade space-y-6">
       <div class="text-center py-6">
         <div class="text-[10px] font-black uppercase tracking-[.3em] text-slate-500 mb-2">Case Debrief — ${esc(S.diagnosis)}</div>
+        <div class="text-[9px] font-black uppercase tracking-[.25em] text-slate-600 mb-2">Marked at ${esc(getLevel(S.level).label)} level</div>
         <div class="text-7xl font-black mono ${score>=80?'text-emerald-500':score>=60?'text-yellow-500':'text-red-500'}">${score}<span class="text-2xl text-slate-600">/100</span></div>
         <div class="text-lg font-bold text-white mt-1">${esc(d.outcome||'Case complete')}</div>
       </div>
       <div class="bg-slate-900/50 border border-slate-800 rounded-2xl p-5 text-sm text-slate-300 leading-relaxed">${esc(d.summary||'')}</div>
+      ${S.dx.length?`<div class="space-y-2">
+        <h3 class="text-[10px] font-black uppercase tracking-widest text-fuchsia-400">Your Differential</h3>
+        <div class="flex flex-wrap gap-2">${S.dx.map(x=>{
+          const truth=(S.diagnosis||'').toLowerCase(), guess=x.name.toLowerCase();
+          const hit = truth && (truth.includes(guess)||guess.includes(truth));
+          return `<span class="px-3 py-1.5 rounded-xl text-xs font-bold border ${hit?'bg-emerald-500/10 border-emerald-500/40 text-emerald-300':x.confidence==='ruled-out'?'bg-slate-900/40 border-slate-800 text-slate-600 line-through':'bg-slate-900/60 border-slate-700 text-slate-300'}">${hit?'✓ ':''}${esc(x.name)}${x.confidence==='leading'?' <span class="text-[9px] uppercase tracking-widest opacity-60">Leading</span>':''}</span>`;
+        }).join('')}</div>
+        ${d.diagnosisReview?`<p class="text-xs text-slate-400 leading-relaxed pt-1">${esc(d.diagnosisReview)}</p>`:''}
+      </div>`:''}
       ${ev.length?`<div class="space-y-2"><h3 class="text-[10px] font-black uppercase tracking-widest text-slate-500">Critical Events</h3>${ev.map(e=>`<div class="p-4 bg-slate-900/40 border border-slate-800 rounded-xl border-l-4 ${e.type==='positive'?'border-l-emerald-600':e.type==='negative'?'border-l-red-600':'border-l-slate-600'}"><div class="text-sm font-bold ${e.type==='positive'?'text-emerald-400':e.type==='negative'?'text-red-400':'text-slate-300'}">${esc(e.event)}</div><p class="text-xs text-slate-400 mt-1">${esc(e.feedback)}</p></div>`).join('')}</div>`:''}
       ${arrSec('Missed Opportunities','red',d.missedOpportunities)}
       ${arrSec('Key Learning Points','emerald',d.learningPoints&&d.learningPoints.length?d.learningPoints:S.learningPoints)}
@@ -457,6 +1038,8 @@ function arrSec(title,color,arr){
 function downloadReport(d,score){
   const txt=`MEDISIM ER — CASE REPORT
 Diagnosis: ${S.diagnosis}
+Training level: ${getLevel(S.level).label}
+Your differential: ${S.dx.length?S.dx.map(x=>x.name+(x.confidence==='leading'?' (leading)':x.confidence==='ruled-out'?' (ruled out)':'')).join('; '):'none documented'}
 Outcome: ${d.outcome||''}
 Score: ${score}/100
 
