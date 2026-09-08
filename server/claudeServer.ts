@@ -34,6 +34,29 @@ function ensureArray(val: any): any[] {
   return [val];
 }
 
+/**
+ * Coerce Claude's patient description into the shape the image engine expects,
+ * so a missing or half-filled brief still renders something sane.
+ */
+function normalizePatientVisual(raw: any): any {
+  if (!raw || typeof raw !== "object") return undefined;
+  const age = Number(raw.ageYears);
+  return {
+    ageYears: Number.isFinite(age) ? age : 45,
+    sex: typeof raw.sex === "string" && raw.sex.trim() ? raw.sex.trim() : "adult",
+    build: raw.build || undefined,
+    position: raw.position || undefined,
+    visibleFindings: ensureArray(raw.visibleFindings).filter(
+      (f: any) => typeof f === "string" && f.trim()
+    ),
+    devices: ensureArray(raw.devices).filter(
+      (d: any) => typeof d === "string" && d.trim()
+    ),
+    distress: raw.distress || undefined,
+    setting: raw.setting || undefined,
+  };
+}
+
 /** Pull the JSON object out of a Claude response constrained by output_config.format. */
 function parseJSON(message: Anthropic.Message): any {
   const textBlock = message.content.find((b) => b.type === "text") as
@@ -60,6 +83,27 @@ const VITALS_SCHEMA = {
   additionalProperties: false,
 };
 
+/**
+ * What the patient looks like from the doorway. Rendered into a bedside image
+ * by server/imageServer.ts, so it has to describe THIS patient and THIS
+ * pathology — the demographics and the findings are both load-bearing.
+ */
+const PATIENT_VISUAL_SCHEMA = {
+  type: "object",
+  properties: {
+    ageYears: { type: "number" },
+    sex: { type: "string" },
+    build: { type: "string" },
+    position: { type: "string" },
+    visibleFindings: { type: "array", items: { type: "string" } },
+    devices: { type: "array", items: { type: "string" } },
+    distress: { type: "string" },
+    setting: { type: "string" },
+  },
+  required: ["ageYears", "sex", "visibleFindings"],
+  additionalProperties: false,
+};
+
 const CASE_INIT_SCHEMA = {
   type: "object",
   properties: {
@@ -68,6 +112,7 @@ const CASE_INIT_SCHEMA = {
     context: { type: "string" },
     learningPoints: { type: "array", items: { type: "string" } },
     diagnosis: { type: "string" },
+    patientVisual: PATIENT_VISUAL_SCHEMA,
     criticalActions: { type: "array", items: { type: "string" } },
     visualCatalog: {
       type: "array",
@@ -88,6 +133,7 @@ const CASE_INIT_SCHEMA = {
     "context",
     "learningPoints",
     "diagnosis",
+    "patientVisual",
     "criticalActions",
     "visualCatalog",
   ],
@@ -110,9 +156,15 @@ RULES:
    imperative order names a physician would click at the bedside (e.g. "Apply pelvic binder",
    "Arterial tourniquet", "Activate massive transfusion protocol", "Needle decompression",
    "Activate cath lab"). Name the intervention only — never the diagnosis, and no explanation.
-7. Base presentation, vitals, and management on current evidence-based practice.
-8. Pitch the difficulty, the amount of missing data, and the subtlety of the findings at the training level above.
-9. Respond ONLY with the JSON object defined by the schema.`;
+7. "patientVisual" describes what THIS patient looks like at the bedside; it is rendered into a photograph the trainee sees, so it must match the case exactly:
+   - "ageYears" and "sex" are the patient's real demographics from the case. A 37-year-old trauma patient is a 37-year-old, never a generic elderly patient.
+   - "visibleFindings" lists only what is visible from the doorway or on exposure, in concrete physical terms: bleeding and its location and volume, deformity, burns, rash, swelling, pallor or cyanosis or jaundice, guarding, respiratory effort, obvious injuries. Name the body part and the side. Do NOT list vitals, lab values, symptoms the patient only reports, or the diagnosis itself.
+   - "devices" lists what is already on the patient on arrival (C-collar, non-rebreather, tourniquet, splint, IV lines, monitor leads) — nothing the player has not ordered yet.
+   - "build", "position", "distress" and "setting" ground the scene; keep them short and physical.
+   - This must never contradict the "intro". If the intro says the patient is a 37-year-old man with an open tibia fracture, the visual brief says exactly that.
+8. Base presentation, vitals, and management on current evidence-based practice.
+9. Pitch the difficulty, the amount of missing data, and the subtlety of the findings at the training level above.
+10. Respond ONLY with the JSON object defined by the schema.`;
 };
 
 export const startCaseFromTopicCmd = async (
@@ -127,7 +179,7 @@ export const startCaseFromTopicCmd = async (
     messages: [
       {
         role: "user",
-        content: `Create a complex, realistic, challenging ER simulation case based on the topic: "${topic}". Leave visualCatalog as an empty array (no documents were uploaded).`,
+        content: `Create a complex, realistic, challenging ER simulation case based on the topic: "${topic}". Leave visualCatalog as an empty array (no documents were uploaded), but always fill in "patientVisual" so the bedside image shows this patient with this pathology.`,
       },
     ],
     output_config: {
@@ -141,6 +193,7 @@ export const startCaseFromTopicCmd = async (
     ...parsed,
     vitals: { ...DEFAULT_VITALS, ...parsed.vitals },
     visualCatalog: [],
+    patientVisual: normalizePatientVisual(parsed.patientVisual),
     learningPoints: ensureArray(parsed.learningPoints),
     criticalActions: ensureArray(parsed.criticalActions),
   };
@@ -186,7 +239,7 @@ export const analyzePDFAndStartCaseCmd = async (
 There are ${extractedImages.length} visual assets available, indexed 0..${Math.max(
               0,
               extractedImages.length - 1
-            )}. For any asset relevant to the case (EKG, chest X-ray, CT, etc.) add an entry to "visualCatalog" where "id" is the string index (e.g. "0") and "label" is a short name (e.g. "12-Lead EKG"). If no assets are relevant, return an empty visualCatalog array.`,
+            )}. For any asset relevant to the case (EKG, chest X-ray, CT, etc.) add an entry to "visualCatalog" where "id" is the string index (e.g. "0") and "label" is a short name (e.g. "12-Lead EKG"). If no assets are relevant, return an empty visualCatalog array. Always fill in "patientVisual" from the records so the bedside image shows this patient with this pathology.`,
           },
         ],
       },
@@ -206,6 +259,7 @@ There are ${extractedImages.length} visual assets available, indexed 0..${Math.m
     ...parsed,
     vitals: { ...DEFAULT_VITALS, ...parsed.vitals },
     visualCatalog: finalVisuals,
+    patientVisual: normalizePatientVisual(parsed.patientVisual),
     learningPoints: ensureArray(parsed.learningPoints),
     criticalActions: ensureArray(parsed.criticalActions),
   };
@@ -261,6 +315,18 @@ const SIM_PROGRESS_SCHEMA = {
     isCaseOver: { type: "boolean" },
     clinicalRationale: { type: "string" },
     imageIdToDisplay: { type: "string" },
+    patientVisualUpdate: {
+      type: "object",
+      properties: {
+        reason: { type: "string" },
+        visibleFindings: { type: "array", items: { type: "string" } },
+        devices: { type: "array", items: { type: "string" } },
+        distress: { type: "string" },
+        position: { type: "string" },
+      },
+      required: ["reason"],
+      additionalProperties: false,
+    },
     debriefData: {
       type: "object",
       properties: {
@@ -352,7 +418,8 @@ STRICT RULES:
    narrow or anchored one scores poorly. Put that reasoning in "diagnosisReview", naming which of
    their diagnoses were right, which were reasonable to carry, and what was missed.
 10. If the player requests a visual that exists, set "imageIdToDisplay" to its id.
-11. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
+11. PATIENT APPEARANCE: the trainee is looking at a bedside image of this patient. Whenever the patient's VISIBLE appearance materially changes this turn — intubated, chest tube or central line placed, tourniquet applied, bleeding controlled, burns dressed, cyanosis resolving, a new rash or seizure, the patient going from agitated to obtunded — return "patientVisualUpdate" with a short "reason" plus the FULL updated "visibleFindings" and "devices" lists (not just the delta), and "distress"/"position" if they changed. Omit "patientVisualUpdate" entirely when nothing visible changed; ordering a lab or asking a history question changes nothing visible.
+12. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
 
   const visualInventory = (visuals || [])
     .map((v) => `id ${v.id}: ${v.label}`)

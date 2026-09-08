@@ -25,6 +25,8 @@ import {
   Message,
   SimulationResponse,
   CaseHistoryEntry,
+  PatientVisualBrief,
+  PatientImage,
   WorkingDiagnosis,
   OrderLogEntry,
   OrderCategory
@@ -47,11 +49,13 @@ import {
   analyzePDFAndStartCase, 
   startCaseFromTopic,
   progressSimulation, 
+  generatePatientImage,
   GeminiFileInput 
 } from './services/geminiService';
 import { extractImagesFromPDF } from './services/pdfService';
 import VitalsMonitor from './components/VitalsMonitor';
 import ChatInterface from './components/ChatInterface';
+import PatientView from './components/PatientView';
 import Controls from './components/Controls';
 import DebriefScreen from './components/DebriefScreen';
 import ErrorModal from './components/ErrorModal';
@@ -71,6 +75,8 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const SAVE_KEY = 'medisim_er_v6_state';
+// Catalog id for the generated bedside photo of the patient.
+const PATIENT_VISUAL_ID = 'patient';
 const HISTORY_KEY = 'medisim_er_v6_history';
 
 enum OperationType {
@@ -214,6 +220,17 @@ const App: React.FC = () => {
   const [isWide, setIsWide] = useState(
     () => typeof window === 'undefined' || window.innerWidth >= 1280
   );
+  // Whether the server has a Gemini key; without one the bedside panel stays hidden.
+  const [imageryEnabled, setImageryEnabled] = useState(false);
+  // Bumped on every render request so a stale response can never overwrite a newer one.
+  const patientRenderSeq = useRef(0);
+
+  useEffect(() => {
+    fetch('/api/health')
+      .then(res => res.json())
+      .then(data => setImageryEnabled(!!data.patientImagery))
+      .catch(() => setImageryEnabled(false));
+  }, []);
 
   useEffect(() => {
     // The chart docks as a side column only when there is room for it beside the
@@ -304,10 +321,110 @@ const App: React.FC = () => {
   }, [gameState.stage, audioMonitor]);
 
   useEffect(() => {
-    if (gameState.stage !== 'upload' && gameState.stage !== 'analyzing') {
+    if (gameState.stage === 'upload' || gameState.stage === 'analyzing') return;
+    try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(gameState));
+    } catch (e) {
+      // Rendered patient images and extracted scans are megabytes of base64 and
+      // can blow the localStorage quota. The case matters more than the
+      // pictures, so save it without them rather than losing the session.
+      try {
+        const slim = {
+          ...gameState,
+          visuals: [],
+          patientImage: gameState.patientImage
+            ? { ...gameState.patientImage, dataUrl: undefined }
+            : undefined,
+          messages: gameState.messages.map(m =>
+            m.imageUrl ? { ...m, imageUrl: undefined } : m
+          )
+        };
+        localStorage.setItem(SAVE_KEY, JSON.stringify(slim));
+      } catch (inner) {
+        console.warn('Could not persist simulation state:', inner);
+      }
     }
   }, [gameState]);
+
+  /**
+   * Render the patient at the bedside from the case's own visual brief, so the
+   * trainee sees this patient with this pathology instead of a stock portrait.
+   * Fire-and-forget: the case plays fine while the image is still rendering,
+   * and a failed render only costs the picture.
+   */
+  const renderPatient = async (
+    brief: PatientVisualBrief | undefined,
+    label: string,
+    attach: 'first' | 'last' | 'none'
+  ) => {
+    if (!brief) return;
+    const seq = ++patientRenderSeq.current;
+
+    setGameState(prev => ({
+      ...prev,
+      patientVisual: brief,
+      patientImage: { ...(prev.patientImage || {}), status: 'generating', label }
+    }));
+
+    if (!imageryEnabled) {
+      setGameState(prev => ({
+        ...prev,
+        patientImage: {
+          status: 'unavailable',
+          label,
+          message: 'Patient imagery is off. Set GEMINI_API_KEY on the server to render the bedside view.'
+        }
+      }));
+      return;
+    }
+
+    try {
+      const result = await generatePatientImage(brief);
+      if (seq !== patientRenderSeq.current) return; // a newer render already won
+
+      const image: PatientImage = {
+        status: 'ready',
+        dataUrl: result.dataUrl,
+        label,
+        illustrated: result.usedFallbackStyle
+      };
+
+      setGameState(prev => {
+        const messages = [...prev.messages];
+        let idx = -1;
+        if (attach === 'last') {
+          for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].role === 'assistant') { idx = i; break; }
+          }
+        } else if (attach === 'first') {
+          idx = messages.findIndex(m => m.role === 'assistant');
+        }
+        if (idx >= 0) {
+          messages[idx] = { ...messages[idx], imageUrl: result.dataUrl, imageLabel: label };
+        }
+
+        // Keep the catalog entry current so the engine can call the bedside
+        // view back up when the player asks to look at the patient.
+        const visuals = [
+          ...prev.visuals.filter(v => v.id !== PATIENT_VISUAL_ID),
+          { id: PATIENT_VISUAL_ID, data: result.dataUrl, label }
+        ];
+
+        return { ...prev, messages, visuals, patientImage: image };
+      });
+    } catch (err: any) {
+      if (seq !== patientRenderSeq.current) return;
+      const message = err?.message || 'Could not render the patient.';
+      setGameState(prev => ({
+        ...prev,
+        // A failed re-render mid-case shouldn't wipe a good bedside image —
+        // keep the last one under its own label and say the update failed.
+        patientImage: prev.patientImage?.dataUrl
+          ? { ...prev.patientImage, status: 'ready', message }
+          : { status: 'unavailable', label, message }
+      }));
+    }
+  };
 
   const handleStartFromTopic = async () => {
     if (!topicInput.trim()) return;
@@ -326,9 +443,12 @@ const App: React.FC = () => {
         hiddenDiagnosis: initData.diagnosis,
         caseContext: initData.context,
         visuals: initData.visualCatalog,
+        patientVisual: initData.patientVisual,
         criticalActions: initData.criticalActions || [],
         level
       });
+      // Don't block the bedside on the render — the case starts now.
+      renderPatient(initData.patientVisual, 'Patient on arrival', 'first');
     } catch (err: any) {
       setError(err.message || "Failed to generate simulation from topic.");
       setGameState(prev => ({ ...prev, stage: 'upload' }));
@@ -368,9 +488,11 @@ const App: React.FC = () => {
         hiddenDiagnosis: initData.diagnosis,
         caseContext: initData.context,
         visuals: initData.visualCatalog,
+        patientVisual: initData.patientVisual,
         criticalActions: initData.criticalActions || [],
         level
       });
+      renderPatient(initData.patientVisual, 'Patient on arrival', 'first');
     } catch (err: any) {
       setError(err.message || "An error occurred during case initialization.");
       setGameState(prev => ({ ...prev, stage: 'upload' }));
@@ -427,7 +549,8 @@ const App: React.FC = () => {
         content: response.narrative,
         timestamp: Date.now(),
         clinicalRationale: response.clinicalRationale,
-        imageUrl: response.imageIdToDisplay ? gameState.visuals.find(v => v.id === response.imageIdToDisplay)?.data : undefined
+        imageUrl: response.imageIdToDisplay ? gameState.visuals.find(v => v.id === response.imageIdToDisplay)?.data : undefined,
+        imageLabel: response.imageIdToDisplay ? gameState.visuals.find(v => v.id === response.imageIdToDisplay)?.label : undefined
       };
 
       setGameState(prev => {
@@ -458,6 +581,26 @@ const App: React.FC = () => {
           } : prev.debriefData
         };
       });
+
+      // The patient looks different now — re-render so the bedside view keeps
+      // showing the pathology as it actually stands.
+      const visualUpdate = response.patientVisualUpdate;
+      if (visualUpdate && gameState.patientVisual) {
+        const base = gameState.patientVisual;
+        renderPatient(
+          {
+            ...base,
+            visibleFindings: visualUpdate.visibleFindings?.length
+              ? visualUpdate.visibleFindings
+              : base.visibleFindings,
+            devices: visualUpdate.devices?.length ? visualUpdate.devices : base.devices,
+            distress: visualUpdate.distress || base.distress,
+            position: visualUpdate.position || base.position
+          },
+          visualUpdate.reason || 'Patient — reassessed',
+          'last'
+        );
+      }
 
       if (response.isCaseOver) {
         const debrief = response.debriefData || {
@@ -860,6 +1003,21 @@ const App: React.FC = () => {
                     <ChevronRight className="w-5 h-5" />
                   </button>
                 </div>
+
+                {/* Bedside View */}
+                {(gameState.patientImage || gameState.patientVisual) && (
+                  <PatientView
+                    image={gameState.patientImage}
+                    brief={gameState.patientVisual}
+                    onRegenerate={() =>
+                      renderPatient(
+                        gameState.patientVisual,
+                        gameState.patientImage?.label || 'Patient on arrival',
+                        'none'
+                      )
+                    }
+                  />
+                )}
 
                 <ChartPanel
                   labResults={gameState.labResults}

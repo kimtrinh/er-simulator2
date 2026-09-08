@@ -6,6 +6,10 @@ import {
   analyzePDFAndStartCaseCmd,
   progressSimulationCmd,
 } from "./server/claudeServer.ts";
+import {
+  generatePatientImage,
+  isImageGenerationEnabled,
+} from "./server/imageServer.ts";
 
 async function startServer() {
   const app = express();
@@ -15,7 +19,12 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
 
   app.get("/api/health", (_req: Request, res: Response) => {
-    res.json({ status: "ok", engine: "claude" });
+    res.json({
+      status: "ok",
+      engine: "claude",
+      // The client hides the patient-image panel when this is false.
+      patientImagery: isImageGenerationEnabled(),
+    });
   });
 
   // Generate a case from a free-text medical topic.
@@ -41,6 +50,24 @@ async function startServer() {
     } catch (e: any) {
       console.error(e);
       res.status(500).json({ error: e.message || "Failed to analyze records." });
+    }
+  });
+
+  // Render the patient described by the case so the trainee sees the actual
+  // pathology at the bedside.
+  app.post("/api/sim/patient-image", async (req: Request, res: Response) => {
+    if (!isImageGenerationEnabled()) {
+      return res.status(501).json({
+        error:
+          "Patient imagery is not configured. Set GEMINI_API_KEY in the server environment to enable it.",
+      });
+    }
+    try {
+      const result = await generatePatientImage(req.body.brief);
+      res.json(result);
+    } catch (e: any) {
+      console.error(e);
+      res.status(502).json({ error: e.message || "Failed to render the patient." });
     }
   });
 

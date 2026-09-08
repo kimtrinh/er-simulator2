@@ -355,6 +355,7 @@ export const ORDER_GROUPS: OrderGroup[] = [
       { label: 'SAMPLE / AMPLE History', detail: 'Take an AMPLE history: allergies, medications, past history, last meal, and events surrounding the presentation.', category: 'history', keywords: 'AMPLE SAMPLE allergies medications past history' },
       { label: 'Collateral History', detail: 'Obtain collateral history from EMS, family, or the nursing home.', category: 'history', keywords: 'collateral EMS family witness bystander' },
       { label: 'Medication & Allergy Review', detail: 'Review the medication list and allergies, with particular attention to anticoagulants, beta-blockers, and immunosuppressants.', category: 'history', keywords: 'medications allergies anticoagulant reconciliation' },
+      { label: 'Look at the Patient', detail: 'Step to the bedside and look at the patient.', category: 'exam', keywords: 'look inspect bedside general appearance eyeball gestalt visual' },
       { label: 'Head-to-Toe Exam', detail: 'Perform a complete head-to-toe physical examination.', category: 'exam', keywords: 'physical exam full head to toe secondary survey' },
       { label: 'Cardiopulmonary Exam', detail: 'Examine the heart and lungs — heart sounds, murmurs, JVP, breath sounds, and work of breathing.', category: 'exam', keywords: 'heart lungs auscultation murmur JVP breath sounds' },
       { label: 'Abdominal Exam', detail: 'Examine the abdomen for tenderness, guarding, rebound, distension, and pulsatile mass.', category: 'exam', keywords: 'abdomen belly peritonitis guarding rebound' },
@@ -391,6 +392,7 @@ export const CRITICAL_ACTIONS: OrderItem[] = ALL_ORDERS.filter((o) => o.critical
 
 /** Shown on the sim-room command bar — the handful used on nearly every case. */
 export const QUICK_ACTIONS: OrderItem[] = [
+  ALL_ORDERS.find((o) => o.label === 'Look at the Patient')!,
   ALL_ORDERS.find((o) => o.label === 'Focused History')!,
   ALL_ORDERS.find((o) => o.label === 'Head-to-Toe Exam')!,
   ALL_ORDERS.find((o) => o.label === 'Recheck Full Vitals')!,

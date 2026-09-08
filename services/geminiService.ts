@@ -1,4 +1,10 @@
-import { Vitals, SimulationResponse, ExtractedImage, TrainingLevel } from "../types";
+import {
+  Vitals,
+  SimulationResponse,
+  ExtractedImage,
+  PatientVisualBrief,
+  TrainingLevel,
+} from "../types";
 
 /**
  * Thin client for the clinical simulation engine. All AI calls go through the
@@ -29,6 +35,8 @@ export interface CaseInitResponse {
   context: string;
   learningPoints: string[];
   diagnosis: string;
+  /** What the patient looks like, used to render the bedside image. */
+  patientVisual?: PatientVisualBrief;
   /** Time-critical actions for this case, surfaced as clickable orders. */
   criticalActions: string[];
   visualCatalog: ExtractedImage[];
@@ -45,6 +53,16 @@ export const analyzePDFAndStartCase = async (
   level: TrainingLevel
 ): Promise<CaseInitResponse> => postJSON("/api/sim/pdf", { files, extractedImages, level });
 
+/**
+ * Render the bedside image of the patient described by `brief`. Never rejects
+ * the caller's flow — the case plays fine without a picture — so callers get a
+ * message back instead of an exception when imagery is off or refused.
+ */
+export const generatePatientImage = async (
+  brief: PatientVisualBrief
+): Promise<{ dataUrl: string; model: string; usedFallbackStyle: boolean }> =>
+  postJSON("/api/sim/patient-image", { brief });
+
 export const progressSimulation = async (
   context: string,
   history: string[],
@@ -59,7 +77,9 @@ export const progressSimulation = async (
     context,
     history,
     userAction,
-    visuals,
+    // The engine only needs the inventory; sending the base64 payloads back on
+    // every turn would balloon each request by megabytes.
+    visuals: (visuals || []).map(({ id, label }) => ({ id, label })),
     cmePoints,
     workingDiagnoses,
     level,

@@ -19,6 +19,8 @@ export interface Message {
   type?: 'text' | 'alert' | 'success';
   timestamp: number;
   imageUrl?: string;
+  /** Caption shown over an attached image, e.g. "Patient on arrival". */
+  imageLabel?: string;
   clinicalRationale?: string;
 }
 
@@ -49,6 +51,36 @@ export interface DebriefData {
   correctDiagnosis?: string;
   /** Snapshot of the differential the player submitted during the case. */
   submittedDiagnoses?: WorkingDiagnosis[];
+}
+
+/**
+ * What the patient actually looks like. Claude writes this alongside the case
+ * so the rendered image matches the pathology instead of showing a stock
+ * patient who has nothing to do with the scenario.
+ */
+export interface PatientVisualBrief {
+  ageYears: number;
+  sex: string;
+  build?: string;
+  position?: string;
+  visibleFindings?: string[];
+  devices?: string[];
+  distress?: string;
+  setting?: string;
+  notes?: string;
+}
+
+export type PatientImageStatus = 'idle' | 'generating' | 'ready' | 'unavailable';
+
+export interface PatientImage {
+  status: PatientImageStatus;
+  /** Data URL of the most recent render. */
+  dataUrl?: string;
+  label?: string;
+  /** Why no image is showing, when status is 'unavailable'. */
+  message?: string;
+  /** True when the photographic render was declined and an illustration was used. */
+  illustrated?: boolean;
 }
 
 export interface ExtractedImage {
@@ -131,6 +163,8 @@ export interface GameState {
   hiddenDiagnosis: string;
   caseContext: string;
   visuals: ExtractedImage[];
+  patientVisual?: PatientVisualBrief;
+  patientImage?: PatientImage;
   debriefData?: DebriefData;
   labResults: LabResult[];
   diagnosticReports: DiagnosticReport[];
@@ -161,5 +195,17 @@ export interface SimulationResponse {
   isCaseOver: boolean;
   clinicalRationale?: string;
   imageIdToDisplay?: string;
+  /**
+   * Set when the patient's visible appearance materially changed this turn
+   * (intubated, chest tube placed, bleeding controlled, new rash) so the
+   * bedside image can be re-rendered to match.
+   */
+  patientVisualUpdate?: {
+    reason: string;
+    visibleFindings?: string[];
+    devices?: string[];
+    distress?: string;
+    position?: string;
+  };
   debriefData?: DebriefData;
 }

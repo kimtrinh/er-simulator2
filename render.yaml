@@ -1,6 +1,6 @@
 # One-click deploy config for Render (https://render.com).
 # Render reads this "blueprint" and provisions the site automatically — the only
-# thing you set by hand is your Anthropic API key.
+# things you set by hand are your API keys.
 services:
   - type: web
     name: medisim-er
@@ -16,3 +16,5 @@ services:
         value: production
       - key: ANTHROPIC_API_KEY
         sync: false # you paste your key into Render's dashboard; it is never committed
+      - key: GEMINI_API_KEY
+        sync: false # optional — enables the generated bedside patient image
