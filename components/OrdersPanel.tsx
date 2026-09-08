@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Zap, Check, Send, Trash2, AlertTriangle, ArrowLeft, Plus } from 'lucide-react';
+import { Search, Zap, Check, Send, Trash2, AlertTriangle, ArrowLeft, Plus, ChevronDown } from 'lucide-react';
 import {
   ORDER_GROUPS,
   ALL_ORDERS,
@@ -20,7 +20,12 @@ interface Props {
   onSubmitOrders: (orders: OrderItem[]) => void;
   /** Case-specific critical actions suggested by the clinical engine. */
   suggestedCriticalActions: string[];
+  /** Attendings get these collapsed — available on request, never volunteered. */
+  suggestionsExpanded?: boolean;
   onBackToSimRoom: () => void;
+  /** Order set in progress. Held by the parent so it survives leaving this tab. */
+  basket: OrderItem[];
+  onBasketChange: (basket: OrderItem[]) => void;
   disabled: boolean;
 }
 
@@ -84,12 +89,17 @@ const OrderButton: React.FC<{
 const OrdersPanel: React.FC<Props> = ({
   onSubmitOrders,
   suggestedCriticalActions,
+  suggestionsExpanded = true,
   onBackToSimRoom,
+  basket,
+  onBasketChange,
   disabled,
 }) => {
   const [search, setSearch] = useState('');
-  const [basket, setBasket] = useState<OrderItem[]>([]);
   const [activeGroup, setActiveGroup] = useState<string>('critical');
+  const [showSuggested, setShowSuggested] = useState(suggestionsExpanded);
+
+  useEffect(() => setShowSuggested(suggestionsExpanded), [suggestionsExpanded]);
 
   const suggested = useMemo(() => {
     const seen = new Set<string>();
@@ -101,11 +111,16 @@ const OrdersPanel: React.FC<Props> = ({
     });
   }, [suggestedCriticalActions]);
 
-  /** The standing critical-action library, minus what the strip above already shows. */
+  /**
+   * The standing critical-action library. Suggested orders are dropped from it only
+   * while the strip above is actually showing them — collapsed (as it is for
+   * attendings), they stay in the list rather than disappearing from the catalogue.
+   */
   const criticalRow = useMemo(() => {
+    if (!showSuggested) return CRITICAL_ACTIONS;
     const shown = new Set(suggested.map((s) => s.label.toLowerCase()));
     return CRITICAL_ACTIONS.filter((item) => !shown.has(item.label.toLowerCase()));
-  }, [suggested]);
+  }, [suggested, showSuggested]);
 
   const searchResults = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -123,28 +138,26 @@ const OrdersPanel: React.FC<Props> = ({
   const isSelected = (item: OrderItem) => basket.some((b) => b.label === item.label);
 
   const toggle = (item: OrderItem) =>
-    setBasket((prev) =>
-      prev.some((b) => b.label === item.label)
-        ? prev.filter((b) => b.label !== item.label)
-        : [...prev, item]
+    onBasketChange(
+      basket.some((b) => b.label === item.label)
+        ? basket.filter((b) => b.label !== item.label)
+        : [...basket, item]
     );
 
   const sendStat = (item: OrderItem) => {
-    setBasket((prev) => prev.filter((b) => b.label !== item.label));
+    onBasketChange(basket.filter((b) => b.label !== item.label));
     onSubmitOrders([item]);
   };
 
   const signAndSend = () => {
     if (!basket.length) return;
-    const orders = basket;
-    setBasket([]);
-    onSubmitOrders(orders);
+    onSubmitOrders(basket);
   };
 
   const group = ORDER_GROUPS.find((g) => g.id === activeGroup) || ORDER_GROUPS[0];
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-[#020617]">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-[#020617]">
       {/* Header + search */}
       <div className="px-4 md:px-8 pt-5 pb-4 border-b border-slate-900 shrink-0 space-y-4">
         <div className="flex items-center justify-between gap-4">
@@ -176,7 +189,7 @@ const OrdersPanel: React.FC<Props> = ({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto custom-scrollbar px-4 md:px-8 py-6 space-y-8">
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-4 md:px-8 py-6 space-y-8">
         {searchResults ? (
           <div className="space-y-3">
             <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -206,13 +219,24 @@ const OrdersPanel: React.FC<Props> = ({
             {/* Case-specific suggestions */}
             {suggested.length > 0 && (
               <div className="space-y-3">
-                <div className="flex items-center gap-2 text-red-400">
+                <button
+                  onClick={() => setShowSuggested((v) => !v)}
+                  className="flex items-center gap-2 text-red-400 hover:text-red-300 transition-colors"
+                >
                   <Zap className="w-4 h-4" />
                   <span className="text-[10px] font-black uppercase tracking-widest">
                     Suggested for this patient
                   </span>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <ChevronDown
+                    className={cn('w-3.5 h-3.5 transition-transform', !showSuggested && '-rotate-90')}
+                  />
+                  {!showSuggested && (
+                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-600">
+                      {suggested.length} hidden
+                    </span>
+                  )}
+                </button>
+                <div className={cn('grid gap-2 sm:grid-cols-2 lg:grid-cols-3', !showSuggested && 'hidden')}>
                   {suggested.map((item) => (
                     <OrderButton
                       key={`sug-${item.label}`}
@@ -271,14 +295,14 @@ const OrdersPanel: React.FC<Props> = ({
         <motion.div
           initial={{ y: 60, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="border-t border-slate-800 bg-slate-950/95 backdrop-blur-xl p-4 md:px-8 shrink-0 space-y-3"
+          className="sticky bottom-0 z-[70] border-t-2 border-emerald-500/40 bg-slate-950/98 backdrop-blur-xl p-4 md:px-8 shrink-0 space-y-3 shadow-[0_-16px_40px_rgba(2,6,23,0.9)]"
         >
           <div className="flex items-center justify-between gap-4">
             <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
               Order set · {basket.length} item{basket.length === 1 ? '' : 's'}
             </span>
             <button
-              onClick={() => setBasket([])}
+              onClick={() => onBasketChange([])}
               className="text-slate-600 hover:text-red-400 transition-colors flex items-center gap-1.5"
             >
               <Trash2 className="w-3.5 h-3.5" />

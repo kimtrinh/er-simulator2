@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { getLevel, TrainingLevel } from "../data/trainingLevels";
 
 /**
  * Clinical simulation engine powered by Claude (Anthropic API).
@@ -93,7 +94,11 @@ const CASE_INIT_SCHEMA = {
   additionalProperties: false,
 };
 
-const CASE_SYSTEM = `You are a Clinical Simulation Architect. Transform a medical topic or a set of clinical records into a high-fidelity, evidence-based emergency-room simulation case.
+const caseSystem = (level: TrainingLevel) => {
+  const spec = getLevel(level);
+  return `You are a Clinical Simulation Architect. Transform a medical topic or a set of clinical records into a high-fidelity, evidence-based emergency-room simulation case.
+
+TRAINING LEVEL — ${spec.label.toUpperCase()}: ${spec.casePrompt}
 
 RULES:
 1. NO SPOILERS: never reveal the diagnosis or the learning objectives inside the "intro".
@@ -106,14 +111,19 @@ RULES:
    "Arterial tourniquet", "Activate massive transfusion protocol", "Needle decompression",
    "Activate cath lab"). Name the intervention only — never the diagnosis, and no explanation.
 7. Base presentation, vitals, and management on current evidence-based practice.
-8. Respond ONLY with the JSON object defined by the schema.`;
+8. Pitch the difficulty, the amount of missing data, and the subtlety of the findings at the training level above.
+9. Respond ONLY with the JSON object defined by the schema.`;
+};
 
-export const startCaseFromTopicCmd = async (topic: string) => {
+export const startCaseFromTopicCmd = async (
+  topic: string,
+  level: TrainingLevel = "resident"
+) => {
   const client = getClient();
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 4000,
-    system: CASE_SYSTEM,
+    system: caseSystem(level),
     messages: [
       {
         role: "user",
@@ -138,7 +148,8 @@ export const startCaseFromTopicCmd = async (topic: string) => {
 
 export const analyzePDFAndStartCaseCmd = async (
   files: { mimeType: string; data: string }[],
-  extractedImages: string[]
+  extractedImages: string[],
+  level: TrainingLevel = "resident"
 ) => {
   const client = getClient();
 
@@ -163,7 +174,7 @@ export const analyzePDFAndStartCaseCmd = async (
   const message = await client.messages.create({
     model: MODEL,
     max_tokens: 4000,
-    system: CASE_SYSTEM,
+    system: caseSystem(level),
     messages: [
       {
         role: "user",
@@ -311,11 +322,16 @@ export const progressSimulationCmd = async (
   userAction: string,
   visuals: { id: string; label: string }[],
   cmePoints: string[],
-  workingDiagnoses: string[] = []
+  workingDiagnoses: string[] = [],
+  level: TrainingLevel = "resident"
 ) => {
   const client = getClient();
+  const spec = getLevel(level);
 
   const system = `You are the Bedside Simulation Engine for a high-fidelity ER trainer. The player is the treating physician; you control the patient, nurse, environment, and all clinical data.
+
+TRAINING LEVEL — ${spec.label.toUpperCase()}. Bedside behaviour: ${spec.enginePrompt}
+Debrief marking: ${spec.debriefPrompt}
 
 STRICT RULES:
 1. PHYSICAL EXAM: when the player examines the patient, return findings as a "physicalExam" array of { "system", "finding" }.
@@ -329,7 +345,7 @@ STRICT RULES:
    never confirm or deny it outright, and never let a wrong entry on it change the underlying truth.
 8. ORDER SETS: the player may send several orders in one action. Carry out every one of them and
    report the result of each.
-9. Set "isCaseOver" to true when the encounter reaches a natural end (stabilized/admitted, transferred, or death). When true, populate "debriefData" with a fair evaluation against these learning points: ${cmePoints.join(
+9. Hold the bedside behaviour for the training level above in every turn. Set "isCaseOver" to true when the encounter reaches a natural end (stabilized/admitted, transferred, or death). When true, populate "debriefData" with a fair evaluation against these learning points: ${cmePoints.join(
     "; "
   )}. Score "differentialDiagnosis" on the breadth, ranking, and timing of the differential the
    player documented — a broad differential that named the true diagnosis early scores well; a
