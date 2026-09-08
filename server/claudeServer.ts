@@ -67,6 +67,7 @@ const CASE_INIT_SCHEMA = {
     context: { type: "string" },
     learningPoints: { type: "array", items: { type: "string" } },
     diagnosis: { type: "string" },
+    criticalActions: { type: "array", items: { type: "string" } },
     visualCatalog: {
       type: "array",
       items: {
@@ -80,7 +81,15 @@ const CASE_INIT_SCHEMA = {
       },
     },
   },
-  required: ["intro", "vitals", "context", "learningPoints", "diagnosis", "visualCatalog"],
+  required: [
+    "intro",
+    "vitals",
+    "context",
+    "learningPoints",
+    "diagnosis",
+    "criticalActions",
+    "visualCatalog",
+  ],
   additionalProperties: false,
 };
 
@@ -92,8 +101,12 @@ RULES:
 3. "context" is the hidden clinical truth (true diagnosis, pathophysiology, expected course, key exam/lab/imaging findings) used by the engine — the player never sees it.
 4. Identify 3-5 concrete learning points for the case.
 5. "diagnosis" is the single hidden correct diagnosis.
-6. Base presentation, vitals, and management on current evidence-based practice.
-7. Respond ONLY with the JSON object defined by the schema.`;
+6. "criticalActions" lists 4-8 time-critical interventions this specific patient needs, as short
+   imperative order names a physician would click at the bedside (e.g. "Apply pelvic binder",
+   "Arterial tourniquet", "Activate massive transfusion protocol", "Needle decompression",
+   "Activate cath lab"). Name the intervention only — never the diagnosis, and no explanation.
+7. Base presentation, vitals, and management on current evidence-based practice.
+8. Respond ONLY with the JSON object defined by the schema.`;
 
 export const startCaseFromTopicCmd = async (topic: string) => {
   const client = getClient();
@@ -119,6 +132,7 @@ export const startCaseFromTopicCmd = async (topic: string) => {
     vitals: { ...DEFAULT_VITALS, ...parsed.vitals },
     visualCatalog: [],
     learningPoints: ensureArray(parsed.learningPoints),
+    criticalActions: ensureArray(parsed.criticalActions),
   };
 };
 
@@ -182,6 +196,7 @@ There are ${extractedImages.length} visual assets available, indexed 0..${Math.m
     vitals: { ...DEFAULT_VITALS, ...parsed.vitals },
     visualCatalog: finalVisuals,
     learningPoints: ensureArray(parsed.learningPoints),
+    criticalActions: ensureArray(parsed.criticalActions),
   };
 };
 
@@ -273,6 +288,7 @@ const SIM_PROGRESS_SCHEMA = {
           },
         },
         missedOpportunities: { type: "array", items: { type: "string" } },
+        diagnosisReview: { type: "string" },
       },
       required: [
         "outcome",
@@ -294,7 +310,8 @@ export const progressSimulationCmd = async (
   history: string[],
   userAction: string,
   visuals: { id: string; label: string }[],
-  cmePoints: string[]
+  cmePoints: string[],
+  workingDiagnoses: string[] = []
 ) => {
   const client = getClient();
 
@@ -307,15 +324,25 @@ STRICT RULES:
 4. Update "updatedVitals" (all of hr, bpSystolic, bpDiastolic, rr, o2, temp, rhythm) and "vitalTrend" based on physiology and the player's actions.
 5. "clinicalRationale" explains WHY vitals/findings changed, grounded in pathophysiology.
 6. Only return labs/imaging/exam findings the player actually ordered or performed this turn. Do not volunteer the diagnosis.
-7. Set "isCaseOver" to true when the encounter reaches a natural end (stabilized/admitted, transferred, or death). When true, populate "debriefData" with a fair evaluation against these learning points: ${cmePoints.join(
+7. DIFFERENTIAL: the player may carry several working diagnoses at once and may document or revise
+   that differential mid-case. Treat it as their charted reasoning — the team responds to it, but
+   never confirm or deny it outright, and never let a wrong entry on it change the underlying truth.
+8. ORDER SETS: the player may send several orders in one action. Carry out every one of them and
+   report the result of each.
+9. Set "isCaseOver" to true when the encounter reaches a natural end (stabilized/admitted, transferred, or death). When true, populate "debriefData" with a fair evaluation against these learning points: ${cmePoints.join(
     "; "
-  )}.
-8. If the player requests a visual that exists, set "imageIdToDisplay" to its id.
-9. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
+  )}. Score "differentialDiagnosis" on the breadth, ranking, and timing of the differential the
+   player documented — a broad differential that named the true diagnosis early scores well; a
+   narrow or anchored one scores poorly. Put that reasoning in "diagnosisReview", naming which of
+   their diagnoses were right, which were reasonable to carry, and what was missed.
+10. If the player requests a visual that exists, set "imageIdToDisplay" to its id.
+11. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
 
   const visualInventory = (visuals || [])
     .map((v) => `id ${v.id}: ${v.label}`)
     .join(", ");
+
+  const differential = (workingDiagnoses || []).filter(Boolean);
 
   const prompt = `HIDDEN CLINICAL TRUTH (never reveal directly): ${context}
 
@@ -323,6 +350,10 @@ RECENT TRANSCRIPT:
 ${history.slice(-10).join("\n")}
 
 AVAILABLE VISUALS: ${visualInventory || "none"}
+
+PLAYER'S DOCUMENTED DIFFERENTIAL: ${
+    differential.length ? differential.join("; ") : "none documented yet"
+  }
 
 PLAYER ACTION: ${userAction}`;
 

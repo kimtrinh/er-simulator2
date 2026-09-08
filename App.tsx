@@ -18,7 +18,15 @@ import {
   ScrollText,
   X
 } from 'lucide-react';
-import { GameState, Message, SimulationResponse, CaseHistoryEntry } from './types';
+import {
+  GameState,
+  Message,
+  SimulationResponse,
+  CaseHistoryEntry,
+  WorkingDiagnosis,
+  OrderLogEntry,
+  OrderCategory
+} from './types';
 import { 
   auth, 
   db, 
@@ -46,6 +54,11 @@ import Controls from './components/Controls';
 import DebriefScreen from './components/DebriefScreen';
 import ErrorModal from './components/ErrorModal';
 import LearningLog from './components/LearningLog';
+import OrdersPanel from './components/OrdersPanel';
+import DiagnosisPanel from './components/DiagnosisPanel';
+import ChartPanel from './components/ChartPanel';
+import WorkspaceTabs, { WorkspaceView } from './components/WorkspaceTabs';
+import { OrderItem, classifyOrder, labelForOrder } from './data/orderCatalog';
 import { startAmbientNoise, stopAmbientNoise } from './services/audioEffectsService';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -128,8 +141,13 @@ const DEFAULT_STATE: GameState = {
   labResults: [],
   diagnosticReports: [],
   physicalExam: [],
-  vitalTrend: 'stable'
+  vitalTrend: 'stable',
+  workingDiagnoses: [],
+  orderLog: [],
+  criticalActions: []
 };
+
+const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(() => {
@@ -172,14 +190,25 @@ const App: React.FC = () => {
     }
   }, [isLoading]);
   const [audioMonitor, setAudioMonitor] = useState(false);
-  const [chartOpen, setChartOpen] = useState(true);
+  const [chartOpen, setChartOpen] = useState(
+    () => typeof window === 'undefined' || window.innerWidth >= 1024
+  );
+  const [activeView, setActiveView] = useState<WorkspaceView>('sim');
   const [user, setUser] = useState<any>(null);
   const [history, setHistory] = useState<CaseHistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
+  const wasMobileRef = useRef<boolean | null>(null);
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 1024);
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 1024;
+      setIsMobile(mobile);
+      // The workspace drawer covers the whole screen on a phone, so collapse it
+      // when we drop to a narrow layout — the Chart tab is the way in there.
+      if (mobile && wasMobileRef.current === false) setChartOpen(false);
+      wasMobileRef.current = mobile;
+    };
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
@@ -273,6 +302,7 @@ const App: React.FC = () => {
 
     try {
       const initData = await startCaseFromTopic(topicInput);
+      setActiveView('sim');
       setGameState({
         ...DEFAULT_STATE,
         stage: 'playing',
@@ -281,7 +311,8 @@ const App: React.FC = () => {
         learningPoints: initData.learningPoints,
         hiddenDiagnosis: initData.diagnosis,
         caseContext: initData.context,
-        visuals: initData.visualCatalog
+        visuals: initData.visualCatalog,
+        criticalActions: initData.criticalActions || []
       });
     } catch (err: any) {
       setError(err.message || "Failed to generate simulation from topic.");
@@ -312,6 +343,7 @@ const App: React.FC = () => {
       }
 
       const initData = await analyzePDFAndStartCase(geminiInputs, allVisualAssets);
+      setActiveView('sim');
       setGameState({
         ...DEFAULT_STATE,
         stage: 'playing',
@@ -320,7 +352,8 @@ const App: React.FC = () => {
         learningPoints: initData.learningPoints,
         hiddenDiagnosis: initData.diagnosis,
         caseContext: initData.context,
-        visuals: initData.visualCatalog
+        visuals: initData.visualCatalog,
+        criticalActions: initData.criticalActions || []
       });
     } catch (err: any) {
       setError(err.message || "An error occurred during case initialization.");
@@ -330,9 +363,27 @@ const App: React.FC = () => {
     }
   };
 
-  const handleUserAction = async (actionText: string) => {
+  const handleUserAction = async (
+    actionText: string,
+    logEntries?: Omit<OrderLogEntry, 'id' | 'timestamp'>[]
+  ) => {
     if (isLoading) return;
-    setGameState(prev => ({ ...prev, messages: [...prev.messages, { role: 'user', content: actionText, timestamp: Date.now() }] }));
+
+    const entries: OrderLogEntry[] = (
+      logEntries || [
+        {
+          label: labelForOrder(actionText),
+          detail: actionText,
+          category: classifyOrder(actionText) as OrderCategory
+        }
+      ]
+    ).map(e => ({ ...e, id: newId(), timestamp: Date.now() }));
+
+    setGameState(prev => ({
+      ...prev,
+      messages: [...prev.messages, { role: 'user', content: actionText, timestamp: Date.now() }],
+      orderLog: [...entries, ...(prev.orderLog || [])]
+    }));
     
     setIsLoading(true);
     try {
@@ -346,7 +397,10 @@ const App: React.FC = () => {
           gameState.messages.map(m => m.content), 
           actionText, 
           gameState.visuals,
-          gameState.learningPoints
+          gameState.learningPoints,
+          gameState.workingDiagnoses
+            .filter(d => d.confidence !== 'ruled-out')
+            .map(d => (d.confidence === 'leading' ? `${d.name} (leading)` : d.name))
         ),
         timeoutPromise
       ]) as SimulationResponse;
@@ -381,7 +435,9 @@ const App: React.FC = () => {
           stage: response.isCaseOver ? 'debrief' : 'playing' as any,
           debriefData: response.isCaseOver ? {
              ...response.debriefData!,
-             cmeLearningPoints: prev.learningPoints
+             cmeLearningPoints: prev.learningPoints,
+             correctDiagnosis: prev.hiddenDiagnosis,
+             submittedDiagnoses: prev.workingDiagnoses
           } : prev.debriefData
         };
       });
@@ -404,6 +460,9 @@ const App: React.FC = () => {
           criticalEvents: debrief.criticalEvents,
           missedOpportunities: debrief.missedOpportunities,
           learningPoints: gameState.learningPoints,
+          submittedDiagnoses: gameState.workingDiagnoses
+            .filter(d => d.confidence !== 'ruled-out')
+            .map(d => d.name),
           userId: user?.uid || 'local'
         };
 
@@ -431,6 +490,101 @@ const App: React.FC = () => {
       setIsLoading(false);
     }
   };
+
+  /** Place one or more catalogue orders as a single signed order set. */
+  const handleSubmitOrders = (orders: OrderItem[]) => {
+    if (!orders.length) return;
+    const actionText =
+      orders.length === 1
+        ? orders[0].detail
+        : `Order set — carry these out now:\n${orders
+            .map((o, i) => `${i + 1}. ${o.detail}`)
+            .join('\n')}`;
+
+    setActiveView('sim');
+    handleUserAction(
+      actionText,
+      orders.map(o => ({
+        label: o.label,
+        detail: o.detail,
+        category: o.category,
+        critical: o.critical
+      }))
+    );
+  };
+
+  const addDiagnosis = (name: string) => {
+    const clean = name.trim();
+    if (!clean) return;
+    setGameState(prev => {
+      if (prev.workingDiagnoses.some(d => d.name.toLowerCase() === clean.toLowerCase())) return prev;
+      const entry: WorkingDiagnosis = {
+        id: newId(),
+        name: clean,
+        // The first diagnosis on an empty list is the leading one until told otherwise.
+        confidence: prev.workingDiagnoses.length === 0 ? 'leading' : 'considering',
+        timestamp: Date.now()
+      };
+      return { ...prev, workingDiagnoses: [...prev.workingDiagnoses, entry] };
+    });
+  };
+
+  const removeDiagnosis = (id: string) => {
+    setGameState(prev => ({
+      ...prev,
+      workingDiagnoses: prev.workingDiagnoses.filter(d => d.id !== id)
+    }));
+  };
+
+  const setDiagnosisConfidence = (id: string, confidence: WorkingDiagnosis['confidence']) => {
+    setGameState(prev => ({
+      ...prev,
+      workingDiagnoses: prev.workingDiagnoses.map(d => {
+        if (d.id === id) return { ...d, confidence };
+        // Only one diagnosis can lead the differential at a time.
+        if (confidence === 'leading' && d.confidence === 'leading') return { ...d, confidence: 'considering' };
+        return d;
+      })
+    }));
+  };
+
+  /** Commit the differential to the chart and tell the team what we are thinking. */
+  const documentDifferential = () => {
+    const active = gameState.workingDiagnoses.filter(d => d.confidence !== 'ruled-out');
+    if (!active.length || isLoading) return;
+
+    const leading = active.filter(d => d.confidence === 'leading').map(d => d.name);
+    const considering = active.filter(d => d.confidence !== 'leading').map(d => d.name);
+    const ruledOut = gameState.workingDiagnoses
+      .filter(d => d.confidence === 'ruled-out')
+      .map(d => d.name);
+
+    const parts = [
+      leading.length ? `Leading diagnosis: ${leading.join(', ')}.` : '',
+      considering.length ? `Also actively considering: ${considering.join('; ')}.` : '',
+      ruledOut.length ? `Considered and ruled out: ${ruledOut.join('; ')}.` : ''
+    ].filter(Boolean);
+
+    setGameState(prev => ({
+      ...prev,
+      workingDiagnoses: prev.workingDiagnoses.map(d => ({ ...d, submitted: true }))
+    }));
+
+    setActiveView('sim');
+    handleUserAction(`Documenting my working differential. ${parts.join(' ')}`, [
+      {
+        label: `Differential — ${active.length} dx`,
+        detail: active.map(d => d.name).join('; '),
+        category: 'other'
+      }
+    ]);
+  };
+
+  const chartItemCount =
+    gameState.labResults.length +
+    gameState.diagnosticReports.length +
+    gameState.physicalExam.length +
+    gameState.orderLog.length;
 
   const renderContent = () => {
     if (gameState.stage === 'upload' || gameState.stage === 'analyzing') {
@@ -541,16 +695,89 @@ const App: React.FC = () => {
       );
     }
 
-    if (gameState.stage === 'debrief') return <DebriefScreen data={gameState.debriefData!} onRestart={() => setGameState(DEFAULT_STATE)} />;
+    if (gameState.stage === 'debrief') return <DebriefScreen data={gameState.debriefData!} onRestart={() => { setGameState(DEFAULT_STATE); setActiveView('sim'); }} />;
+
+    const showChartTab = isMobile || !chartOpen;
 
     return (
       <div className="flex-1 flex flex-col overflow-hidden bg-[#020617] relative">
         <VitalsMonitor vitals={gameState.vitals} trend={gameState.vitalTrend} audioEnabled={audioMonitor} />
-        
+
+        <WorkspaceTabs
+          active={activeView}
+          onChange={setActiveView}
+          counts={{
+            orders: gameState.orderLog.length,
+            diagnoses: gameState.workingDiagnoses.filter(d => d.confidence !== 'ruled-out').length,
+            chart: chartItemCount
+          }}
+          showChartTab={showChartTab}
+        />
+
         <div className="flex-1 flex overflow-hidden relative">
-          <div className="flex-1 flex flex-col relative border-r border-slate-900">
-            <ChatInterface messages={gameState.messages} isLoading={isLoading} />
-            <Controls onAction={handleUserAction} disabled={isLoading} />
+          <div className="flex-1 flex flex-col relative border-r border-slate-900 min-w-0">
+            {activeView === 'sim' && (
+              <>
+                <ChatInterface messages={gameState.messages} isLoading={isLoading} />
+                <Controls
+                  onAction={handleUserAction}
+                  disabled={isLoading}
+                  criticalActions={gameState.criticalActions}
+                  onOpenOrders={() => setActiveView('orders')}
+                />
+              </>
+            )}
+
+            {activeView === 'orders' && (
+              <OrdersPanel
+                onSubmitOrders={handleSubmitOrders}
+                suggestedCriticalActions={gameState.criticalActions}
+                onBackToSimRoom={() => setActiveView('sim')}
+                disabled={isLoading}
+              />
+            )}
+
+            {activeView === 'diagnosis' && (
+              <DiagnosisPanel
+                diagnoses={gameState.workingDiagnoses}
+                onAdd={addDiagnosis}
+                onRemove={removeDiagnosis}
+                onSetConfidence={setDiagnosisConfidence}
+                onDocument={documentDifferential}
+                onBackToSimRoom={() => setActiveView('sim')}
+                disabled={isLoading}
+              />
+            )}
+
+            {activeView === 'chart' && (
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8">
+                <div className="max-w-5xl mx-auto flex items-center justify-between mb-6">
+                  <div>
+                    <h2 className="text-lg font-black text-white tracking-tight uppercase italic">
+                      Patient <span className="text-blue-500 not-italic">Chart</span>
+                    </h2>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">
+                      Orders &amp; meds given · exam · imaging · labs
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setActiveView('sim')}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-emerald-400 hover:border-emerald-500/40 transition-all shrink-0"
+                  >
+                    <ChevronRight className="w-4 h-4 rotate-180" />
+                    <span className="text-[10px] font-black uppercase tracking-widest">Back to Sim Room</span>
+                  </button>
+                </div>
+                <ChartPanel
+                  variant="page"
+                  labResults={gameState.labResults}
+                  diagnosticReports={gameState.diagnosticReports}
+                  physicalExam={gameState.physicalExam}
+                  orderLog={gameState.orderLog}
+                  workingDiagnoses={gameState.workingDiagnoses}
+                />
+              </div>
+            )}
           </div>
 
           <AnimatePresence>
@@ -561,7 +788,7 @@ const App: React.FC = () => {
                 exit={{ x: isMobile ? '100%' : 300, opacity: 0 }}
                 className={cn(
                   "bg-slate-950/95 backdrop-blur-2xl border-l border-slate-900 overflow-y-auto p-6 space-y-8 z-[60]",
-                  isMobile ? "fixed inset-0" : "w-[400px] relative"
+                  isMobile ? "fixed inset-0" : "w-[400px] relative shrink-0"
                 )}
               >
                 <div className="flex items-center justify-between border-b border-slate-900 pb-4">
@@ -573,78 +800,14 @@ const App: React.FC = () => {
                     {isMobile ? <X className="w-6 h-6" /> : <ChevronRight className="w-5 h-5" />}
                   </button>
                 </div>
-                
-                {/* Physical Exam */}
-                {gameState.physicalExam.length > 0 && (
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-2 text-blue-500">
-                      <Stethoscope className="w-4 h-4" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">Physical Exam</span>
-                    </div>
-                    <div className="grid gap-3">
-                      {gameState.physicalExam.map((e, i) => (
-                        <motion.div 
-                          initial={{ opacity: 0, x: 10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          key={i} 
-                          className="p-4 bg-slate-900/40 rounded-2xl border border-slate-800/50 border-l-4 border-l-blue-600"
-                        >
-                          <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">{e.system}</span>
-                          <p className="text-sm text-slate-200 mt-1">{e.finding}</p>
-                        </motion.div>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
-                {/* Imaging */}
-                {gameState.diagnosticReports.length > 0 && (
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-2 text-emerald-500">
-                      <FileText className="w-4 h-4" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">Imaging Reports</span>
-                    </div>
-                    <div className="grid gap-3">
-                      {gameState.diagnosticReports.map((r, i) => (
-                        <motion.div 
-                          initial={{ opacity: 0, x: 10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          key={i} 
-                          className="p-4 bg-slate-900/40 rounded-2xl border border-slate-800/50 border-l-4 border-l-emerald-600"
-                        >
-                          <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">{r.title}</span>
-                          <p className="text-sm text-slate-200 mt-1">{r.body}</p>
-                        </motion.div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Labs */}
-                {gameState.labResults.length > 0 && (
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-2 text-yellow-500">
-                      <Activity className="w-4 h-4" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">Laboratory</span>
-                    </div>
-                    <div className="bg-slate-900/40 rounded-2xl border border-slate-800/50 overflow-hidden divide-y divide-slate-800/50">
-                      {gameState.labResults.map((l, i) => (
-                        <div key={i} className="flex justify-between items-center px-4 py-3">
-                          <span className="text-xs text-slate-300">{l.name}</span>
-                          <div className="text-right">
-                            <span className={cn(
-                              "text-xs font-bold",
-                              l.flag ? "text-red-500" : "text-emerald-500"
-                            )}>
-                              {l.value}
-                            </span>
-                            <span className="text-[9px] text-slate-600 ml-1 uppercase">{l.unit}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <ChartPanel
+                  labResults={gameState.labResults}
+                  diagnosticReports={gameState.diagnosticReports}
+                  physicalExam={gameState.physicalExam}
+                  orderLog={gameState.orderLog}
+                  workingDiagnoses={gameState.workingDiagnoses}
+                />
               </motion.div>
             )}
           </AnimatePresence>
@@ -707,19 +870,28 @@ const App: React.FC = () => {
                 {audioMonitor ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
               </button>
               <button 
-                onClick={() => setChartOpen(!chartOpen)} 
+                onClick={() => {
+                  const next = !chartOpen;
+                  setChartOpen(next);
+                  // The drawer and the Chart tab show the same chart; never leave the
+                  // player on a tab that just disappeared.
+                  if (next && !isMobile && activeView === 'chart') setActiveView('sim');
+                }}
+                title={chartOpen ? 'Hide the chart drawer' : 'Show the chart drawer'}
                 className={cn(
-                  "p-2.5 rounded-xl border transition-all",
+                  "p-2.5 rounded-xl border transition-all flex items-center gap-2",
                   chartOpen 
                     ? "bg-slate-800 border-slate-700 text-white" 
                     : "bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300"
                 )}
               >
                 <Layout className="w-4 h-4" />
+                <span className="text-[10px] font-black uppercase tracking-widest hidden xl:inline">Chart</span>
               </button>
               <button 
                 onClick={() => {
                   setGameState(DEFAULT_STATE);
+                  setActiveView('sim');
                 }}
                 className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-500 hover:text-red-400 hover:border-red-400/50 transition-all"
               >

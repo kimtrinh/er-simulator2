@@ -1,7 +1,8 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic, MicOff, Send, Command, CornerDownLeft, Plus } from 'lucide-react';
+import { Mic, MicOff, Send, Command, CornerDownLeft, ClipboardList, AlertTriangle } from 'lucide-react';
+import { QUICK_ACTIONS, CRITICAL_ACTIONS, resolveOrderText } from '../data/orderCatalog';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -12,18 +13,11 @@ function cn(...inputs: ClassValue[]) {
 interface Props {
   onAction: (action: string) => void;
   disabled: boolean;
+  /** Case-specific critical actions suggested by the clinical engine. */
+  criticalActions?: string[];
+  /** Jump to the full order-entry view. */
+  onOpenOrders: () => void;
 }
-
-const QUICK_ACTIONS = [
-    { label: "Check Vitals", cmd: "Cycle blood pressure and check full vitals." },
-    { label: "Physical Exam", cmd: "Perform a head-to-toe physical examination." },
-    { label: "Order EKG", cmd: "Obtain a 12-lead EKG immediately." },
-    { label: "Defibrillate", cmd: "Defibrillate patient at 200 Joules. CLEAR!" },
-    { label: "Lab Panel", cmd: "Order CBC, Chem-7, Trop-I, and VBG." },
-    { label: "Chest X-Ray", cmd: "Order a portable bedside Chest X-Ray." },
-    { label: "Start IV", cmd: "Establish 2x large bore IV access and start NS at TKO." },
-    { label: "3% Saline", cmd: "Administer 3% hypertonic saline 100ml bolus over 15 minutes." },
-];
 
 const MEDICAL_VOCABULARY = [
   "tachycardia", "bradycardia", "hypotension", "hypertension", "hypoxia", 
@@ -40,11 +34,23 @@ const MEDICAL_VOCABULARY = [
   "hemorrhage", "embolism", "thrombosis", "ischemia", "infarction"
 ];
 
-const Controls: React.FC<Props> = ({ onAction, disabled }) => {
+const Controls: React.FC<Props> = ({ onAction, disabled, criticalActions = [], onOpenOrders }) => {
   const [inputText, setInputText] = useState('');
   const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
+
+  /** Case-suggested critical actions first, then the standing resuscitation set. */
+  const criticalRow = useMemo(() => {
+    const suggested = criticalActions.map(resolveOrderText);
+    const seen = new Set<string>();
+    return [...suggested, ...CRITICAL_ACTIONS].filter((item) => {
+      const key = item.label.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [criticalActions]);
 
   // Auto-resize logic
   useEffect(() => {
@@ -122,26 +128,57 @@ const Controls: React.FC<Props> = ({ onAction, disabled }) => {
   };
 
   return (
-    <div className="bg-slate-950/80 backdrop-blur-xl border-t border-slate-900 p-3 md:p-6 shadow-[0_-20px_50px_rgba(0,0,0,0.5)] shrink-0">
-      <div className="max-w-6xl mx-auto space-y-3 md:space-y-6">
+    <div className="bg-slate-950/80 backdrop-blur-xl border-t border-slate-900 p-3 md:px-6 md:py-4 shadow-[0_-20px_50px_rgba(0,0,0,0.5)] shrink-0">
+      <div className="max-w-6xl mx-auto space-y-3 md:space-y-4">
         
-        {/* Quick Order Bar */}
-        <div className="flex flex-wrap gap-2 overflow-x-auto pb-2 no-scrollbar">
-            {QUICK_ACTIONS.map((act, i) => (
+        {/* Critical Action Bar — always one click away */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-red-500/80">
+            <AlertTriangle className="w-3 h-3" />
+            <span className="text-[9px] font-black uppercase tracking-[0.2em]">Critical Actions</span>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+            {criticalRow.map((act) => (
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                key={act.label}
+                disabled={disabled}
+                title={act.detail}
+                onClick={() => onAction(act.detail)}
+                className="whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 bg-red-500/[0.06] hover:bg-red-500/15 border border-red-500/25 hover:border-red-500/60 rounded-xl text-[9px] md:text-[10px] font-black uppercase tracking-widest text-red-300 transition-all disabled:opacity-30"
+              >
+                {act.label}
+              </motion.button>
+            ))}
+          </div>
+        </div>
+
+        {/* Quick Order Bar — the catalogue button stays pinned, the chips scroll */}
+        <div className="flex gap-2 items-center">
+          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar flex-1 min-w-0">
+            {QUICK_ACTIONS.map((act) => (
                 <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    key={i}
+                    key={act.label}
                     disabled={disabled}
-                    onClick={() => onAction(act.cmd)}
+                    title={act.detail}
+                    onClick={() => onAction(act.detail)}
                     className="whitespace-nowrap px-3 py-1.5 md:px-4 md:py-2 bg-slate-900/50 hover:bg-emerald-500/10 border border-slate-800 hover:border-emerald-500/30 rounded-xl text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-emerald-400 transition-all disabled:opacity-30"
                 >
                     {act.label}
                 </motion.button>
             ))}
-            <button className="px-3 py-1.5 md:px-4 md:py-2 bg-slate-900/50 border border-slate-800 rounded-xl text-slate-600 hover:text-slate-400 transition-colors">
-              <Plus className="w-3 h-3 md:w-3.5 md:h-3.5" />
-            </button>
+          </div>
+          <button
+            onClick={onOpenOrders}
+            title="Open the full order catalogue"
+            className="shrink-0 whitespace-nowrap flex items-center gap-2 px-3 py-1.5 md:px-4 md:py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+          >
+            <ClipboardList className="w-3 h-3 md:w-3.5 md:h-3.5" />
+            <span className="text-[9px] md:text-[10px] font-black uppercase tracking-widest">All Orders</span>
+          </button>
         </div>
 
         {/* Multi-line Input Form */}
@@ -165,7 +202,7 @@ const Controls: React.FC<Props> = ({ onAction, disabled }) => {
               onKeyDown={handleKeyDown}
               disabled={disabled}
               placeholder={disabled ? 'Processing...' : isListening ? "Listening..." : "Enter command..."}
-              className="w-full bg-transparent text-slate-100 pl-10 md:pl-14 pr-24 md:pr-32 py-3 md:py-5 focus:outline-none font-sans text-sm md:text-base placeholder:text-slate-700 input-scrollbar overflow-y-auto min-h-[48px] md:min-h-[64px]"
+              className="w-full bg-transparent text-slate-100 pl-10 md:pl-14 pr-24 md:pr-32 py-3 md:py-4 focus:outline-none font-sans text-sm md:text-base placeholder:text-slate-700 input-scrollbar overflow-y-auto min-h-[48px] md:min-h-[56px]"
             />
 
             <div className="absolute right-2 md:right-4 bottom-2 md:bottom-4 flex items-center gap-2 md:gap-3">
@@ -193,7 +230,7 @@ const Controls: React.FC<Props> = ({ onAction, disabled }) => {
           </div>
         </div>
         
-        <div className="flex justify-between items-center px-2">
+        <div className="hidden md:flex justify-between items-center px-2">
           <div className="flex items-center gap-2">
             <span className={cn(
               "text-[9px] font-black uppercase tracking-[0.2em] transition-colors",

@@ -23,34 +23,39 @@ const postJSON = async (url: string, body: unknown) => {
   return data;
 };
 
-export const startCaseFromTopic = async (
-  topic: string
-): Promise<{
+export interface CaseInitResponse {
   intro: string;
   vitals: Vitals;
   context: string;
   learningPoints: string[];
   diagnosis: string;
+  /** Time-critical actions for this case, surfaced as clickable orders. */
+  criticalActions: string[];
   visualCatalog: ExtractedImage[];
-}> => postJSON("/api/sim/topic", { topic });
+}
+
+export const startCaseFromTopic = async (topic: string): Promise<CaseInitResponse> =>
+  postJSON("/api/sim/topic", { topic });
 
 export const analyzePDFAndStartCase = async (
   files: GeminiFileInput[],
   extractedImages: string[]
-): Promise<{
-  intro: string;
-  vitals: Vitals;
-  context: string;
-  learningPoints: string[];
-  diagnosis: string;
-  visualCatalog: ExtractedImage[];
-}> => postJSON("/api/sim/pdf", { files, extractedImages });
+): Promise<CaseInitResponse> => postJSON("/api/sim/pdf", { files, extractedImages });
 
 export const progressSimulation = async (
   context: string,
   history: string[],
   userAction: string,
   visuals: ExtractedImage[],
-  cmePoints: string[]
+  cmePoints: string[],
+  /** The player's current working differential, in their own words. */
+  workingDiagnoses: string[] = []
 ): Promise<SimulationResponse> =>
-  postJSON("/api/sim/progress", { context, history, userAction, visuals, cmePoints });
+  postJSON("/api/sim/progress", {
+    context,
+    history,
+    userAction,
+    visuals,
+    cmePoints,
+    workingDiagnoses,
+  });

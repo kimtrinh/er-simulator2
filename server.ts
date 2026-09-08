@@ -46,13 +46,15 @@ async function startServer() {
   // Advance the simulation one player action at a time.
   app.post("/api/sim/progress", async (req: Request, res: Response) => {
     try {
-      const { context, history, userAction, visuals, cmePoints } = req.body;
+      const { context, history, userAction, visuals, cmePoints, workingDiagnoses } =
+        req.body;
       const data = await progressSimulationCmd(
         context,
         history,
         userAction,
         visuals,
-        cmePoints
+        cmePoints,
+        workingDiagnoses
       );
       res.json(data);
     } catch (e: any) {
