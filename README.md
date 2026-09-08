@@ -8,6 +8,7 @@ The clinical engine is powered by **Claude** (Anthropic API). The API key stays 
 
 - **Two ways to start a case** — type a medical topic ("Diabetic Ketoacidosis") or upload clinical records (PDF / images).
 - **Live vitals monitor** — animated ECG waveform, HR / BP / RR / O₂ / temp with physiologic drift, and a stable → critical trend engine.
+- **Three training levels** — pick Medical Student, Resident, or Attending before the case. The level changes how the case is written (classic vs. undifferentiated), how much the team gives away at the bedside (the nurse prompts you vs. consultants pushing back), whether critical actions are suggested up front, and how strictly the debrief is marked.
 - **Four-tab workspace** — Sim Room, Orders, Diagnosis, and Chart sit under the always-visible monitor, so you can jump from order entry back to the bedside in one click.
 - **Clickable order catalogue** — every bedside action is an order you can search and click, including the time-critical ones: pelvic binder, arterial tourniquet, wound packing, needle decompression, massive transfusion, TXA, REBOA, thoracotomy, cricothyrotomy. Batch them into a signed order set or fire one STAT. The engine also names the critical actions this particular patient needs and surfaces them as suggestions.
 - **A real differential** — carry several working diagnoses at once, rank them leading / considering / ruled out, revise them as data returns, and document them to the chart. The debrief grades the breadth, ranking, and timing of your differential, not just the final answer.
@@ -56,6 +57,7 @@ Browser (React + Vite)
 - `server/claudeServer.ts` — builds the prompts and calls Claude with structured outputs so every response is valid JSON (case setup, critical actions, vitals, labs, imaging, debrief).
 - `services/geminiService.ts` — the browser's thin client for those endpoints.
 - `data/orderCatalog.ts` — the bedside order catalogue: every clickable order, which ones count as critical actions, and the matching used to file free-text orders into the chart.
+- `data/trainingLevels.ts` — the three training levels and the prompt fragments that pitch the case, the bedside, and the marking at each.
 - History is stored in `localStorage`; there is no external database or sign-in.
 - `medisim-er-local.html` is a standalone single-file edition that runs against your own model in LM Studio / Ollama. It mirrors the same workspace, order catalogue, and differential.
 

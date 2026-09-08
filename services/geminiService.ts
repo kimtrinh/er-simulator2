@@ -1,4 +1,4 @@
-import { Vitals, SimulationResponse, ExtractedImage } from "../types";
+import { Vitals, SimulationResponse, ExtractedImage, TrainingLevel } from "../types";
 
 /**
  * Thin client for the clinical simulation engine. All AI calls go through the
@@ -34,13 +34,16 @@ export interface CaseInitResponse {
   visualCatalog: ExtractedImage[];
 }
 
-export const startCaseFromTopic = async (topic: string): Promise<CaseInitResponse> =>
-  postJSON("/api/sim/topic", { topic });
+export const startCaseFromTopic = async (
+  topic: string,
+  level: TrainingLevel
+): Promise<CaseInitResponse> => postJSON("/api/sim/topic", { topic, level });
 
 export const analyzePDFAndStartCase = async (
   files: GeminiFileInput[],
-  extractedImages: string[]
-): Promise<CaseInitResponse> => postJSON("/api/sim/pdf", { files, extractedImages });
+  extractedImages: string[],
+  level: TrainingLevel
+): Promise<CaseInitResponse> => postJSON("/api/sim/pdf", { files, extractedImages, level });
 
 export const progressSimulation = async (
   context: string,
@@ -49,7 +52,8 @@ export const progressSimulation = async (
   visuals: ExtractedImage[],
   cmePoints: string[],
   /** The player's current working differential, in their own words. */
-  workingDiagnoses: string[] = []
+  workingDiagnoses: string[] = [],
+  level?: TrainingLevel
 ): Promise<SimulationResponse> =>
   postJSON("/api/sim/progress", {
     context,
@@ -58,4 +62,5 @@ export const progressSimulation = async (
     visuals,
     cmePoints,
     workingDiagnoses,
+    level,
   });

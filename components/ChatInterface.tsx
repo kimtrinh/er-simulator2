@@ -76,7 +76,7 @@ const ChatInterface: React.FC<Props> = ({ messages = [], isLoading }) => {
   }, [messages, isLoading]);
 
   return (
-    <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-4 md:space-y-8 bg-[#020617]/50 scroll-smooth custom-scrollbar">
+    <div className="flex-1 min-h-0 overflow-y-auto p-3 md:p-6 space-y-4 md:space-y-8 bg-[#020617]/50 scroll-smooth custom-scrollbar">
       <AnimatePresence initial={false}>
         {(messages || []).map((msg, idx) => (
           <motion.div

@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic, MicOff, Send, Command, CornerDownLeft, ClipboardList, AlertTriangle } from 'lucide-react';
+import { Mic, MicOff, Send, Command, CornerDownLeft, ClipboardList, AlertTriangle, ChevronDown } from 'lucide-react';
 import { QUICK_ACTIONS, CRITICAL_ACTIONS, resolveOrderText } from '../data/orderCatalog';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -15,6 +15,8 @@ interface Props {
   disabled: boolean;
   /** Case-specific critical actions suggested by the clinical engine. */
   criticalActions?: string[];
+  /** Attendings get the strip collapsed — the orders stay one click away, but nothing is volunteered. */
+  suggestionsExpanded?: boolean;
   /** Jump to the full order-entry view. */
   onOpenOrders: () => void;
 }
@@ -34,8 +36,17 @@ const MEDICAL_VOCABULARY = [
   "hemorrhage", "embolism", "thrombosis", "ischemia", "infarction"
 ];
 
-const Controls: React.FC<Props> = ({ onAction, disabled, criticalActions = [], onOpenOrders }) => {
+const Controls: React.FC<Props> = ({
+  onAction,
+  disabled,
+  criticalActions = [],
+  suggestionsExpanded = true,
+  onOpenOrders,
+}) => {
   const [inputText, setInputText] = useState('');
+  const [showCritical, setShowCritical] = useState(suggestionsExpanded);
+
+  useEffect(() => setShowCritical(suggestionsExpanded), [suggestionsExpanded]);
   const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -133,11 +144,15 @@ const Controls: React.FC<Props> = ({ onAction, disabled, criticalActions = [], o
         
         {/* Critical Action Bar — always one click away */}
         <div className="space-y-2">
-          <div className="flex items-center gap-2 text-red-500/80">
+          <button
+            onClick={() => setShowCritical(v => !v)}
+            className="flex items-center gap-2 text-red-500/80 hover:text-red-400 transition-colors"
+          >
             <AlertTriangle className="w-3 h-3" />
             <span className="text-[9px] font-black uppercase tracking-[0.2em]">Critical Actions</span>
-          </div>
-          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+            <ChevronDown className={cn("w-3 h-3 transition-transform", !showCritical && "-rotate-90")} />
+          </button>
+          <div className={cn("flex gap-2 overflow-x-auto pb-1 no-scrollbar", !showCritical && "hidden")}>
             {criticalRow.map((act) => (
               <motion.button
                 whileHover={{ scale: 1.02 }}

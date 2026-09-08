@@ -15,7 +15,8 @@ import {
   ChevronRight,
   Brain
 } from 'lucide-react';
-import { DebriefData } from '../types';
+import { DebriefData, TrainingLevel } from '../types';
+import { getLevel } from '../data/trainingLevels';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -25,6 +26,7 @@ function cn(...inputs: ClassValue[]) {
 
 interface Props {
   data: DebriefData;
+  level?: TrainingLevel;
   onRestart: () => void;
 }
 
@@ -53,7 +55,8 @@ const ProgressBar = ({ label, value, icon: Icon }: { label: string; value: numbe
     );
 };
 
-const DebriefScreen: React.FC<Props> = ({ data, onRestart }) => {
+const DebriefScreen: React.FC<Props> = ({ data, level, onRestart }) => {
+  const levelSpec = level ? getLevel(level) : null;
   const scoreColor = data.score >= 80 ? 'text-emerald-400 border-emerald-500/30 shadow-emerald-500/20' 
                    : data.score >= 60 ? 'text-yellow-400 border-yellow-500/30 shadow-yellow-500/20' 
                    : 'text-red-400 border-red-500/30 shadow-red-500/20';
@@ -107,6 +110,11 @@ const DebriefScreen: React.FC<Props> = ({ data, onRestart }) => {
                 >
                   {data.outcome}
                 </motion.h2>
+                {levelSpec && (
+                  <span className="mt-4 px-4 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-[9px] font-black uppercase tracking-[0.25em] text-slate-400 z-10">
+                    Marked at {levelSpec.label} level
+                  </span>
+                )}
             </div>
 
             {/* Performance Breakdown */}

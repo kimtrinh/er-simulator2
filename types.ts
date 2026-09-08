@@ -1,4 +1,8 @@
 
+import type { TrainingLevel } from './data/trainingLevels';
+
+export type { TrainingLevel };
+
 export interface Vitals {
   hr: number;
   bpSystolic: number;
@@ -116,6 +120,7 @@ export interface CaseHistoryEntry {
   missedOpportunities: string[];
   learningPoints: string[];
   submittedDiagnoses?: string[];
+  level?: TrainingLevel;
 }
 
 export interface GameState {
@@ -137,6 +142,8 @@ export interface GameState {
   orderLog: OrderLogEntry[];
   /** Case-specific critical actions surfaced by the engine as clickable orders. */
   criticalActions: string[];
+  /** Training level the case was pitched at. */
+  level: TrainingLevel;
 }
 
 export interface ActionPayload {
