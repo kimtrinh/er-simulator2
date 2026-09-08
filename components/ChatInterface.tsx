@@ -179,14 +179,14 @@ const ChatInterface: React.FC<Props> = ({ messages = [], isLoading }) => {
                 {msg.imageUrl && (
                   <div className="mt-4 relative group/img cursor-zoom-in overflow-hidden rounded-2xl border border-slate-800">
                      <div className="absolute top-3 left-3 z-10">
-                        <span className="bg-black/60 backdrop-blur text-[9px] font-black text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded-lg uppercase tracking-widest">Clinical Finding</span>
+                        <span className="bg-black/60 backdrop-blur text-[9px] font-black text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded-lg uppercase tracking-widest">{msg.imageLabel || 'Clinical Finding'}</span>
                      </div>
                      <div className="absolute inset-0 bg-emerald-500/10 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center z-10">
                         <Maximize2 className="w-8 h-8 text-white" />
                      </div>
                      <img 
                        src={msg.imageUrl} 
-                       alt="Clinical Finding" 
+                       alt={msg.imageLabel || 'Clinical Finding'} 
                        className="w-full object-cover max-h-[400px] transition-transform duration-500 group-hover/img:scale-105"
                        onClick={() => setLightboxImage(msg.imageUrl || null)}
                      />

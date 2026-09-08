@@ -1,4 +1,9 @@
-import { Vitals, SimulationResponse, ExtractedImage } from "../types";
+import {
+  Vitals,
+  SimulationResponse,
+  ExtractedImage,
+  PatientVisualBrief,
+} from "../types";
 
 /**
  * Thin client for the clinical simulation engine. All AI calls go through the
@@ -31,6 +36,7 @@ export const startCaseFromTopic = async (
   context: string;
   learningPoints: string[];
   diagnosis: string;
+  patientVisual?: PatientVisualBrief;
   visualCatalog: ExtractedImage[];
 }> => postJSON("/api/sim/topic", { topic });
 
@@ -43,8 +49,19 @@ export const analyzePDFAndStartCase = async (
   context: string;
   learningPoints: string[];
   diagnosis: string;
+  patientVisual?: PatientVisualBrief;
   visualCatalog: ExtractedImage[];
 }> => postJSON("/api/sim/pdf", { files, extractedImages });
+
+/**
+ * Render the bedside image of the patient described by `brief`. Never rejects
+ * the caller's flow — the case plays fine without a picture — so callers get a
+ * message back instead of an exception when imagery is off or refused.
+ */
+export const generatePatientImage = async (
+  brief: PatientVisualBrief
+): Promise<{ dataUrl: string; model: string; usedFallbackStyle: boolean }> =>
+  postJSON("/api/sim/patient-image", { brief });
 
 export const progressSimulation = async (
   context: string,
@@ -53,4 +70,12 @@ export const progressSimulation = async (
   visuals: ExtractedImage[],
   cmePoints: string[]
 ): Promise<SimulationResponse> =>
-  postJSON("/api/sim/progress", { context, history, userAction, visuals, cmePoints });
+  postJSON("/api/sim/progress", {
+    context,
+    history,
+    userAction,
+    // The engine only needs the inventory; sending the base64 payloads back on
+    // every turn would balloon each request by megabytes.
+    visuals: (visuals || []).map(({ id, label }) => ({ id, label })),
+    cmePoints,
+  });

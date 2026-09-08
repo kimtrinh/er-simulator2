@@ -15,6 +15,7 @@ interface Props {
 }
 
 const QUICK_ACTIONS = [
+    { label: "Look at Patient", cmd: "Step to the bedside and look at the patient." },
     { label: "Check Vitals", cmd: "Cycle blood pressure and check full vitals." },
     { label: "Physical Exam", cmd: "Perform a head-to-toe physical examination." },
     { label: "Order EKG", cmd: "Obtain a 12-lead EKG immediately." },
