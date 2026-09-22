@@ -27,7 +27,8 @@ import {
   CaseHistoryEntry,
   WorkingDiagnosis,
   OrderLogEntry,
-  OrderCategory
+  OrderCategory,
+  DebriefData
 } from './types';
 import { 
   auth, 
@@ -47,7 +48,12 @@ import {
   analyzePDFAndStartCase, 
   startCaseFromTopic,
   progressSimulation, 
-  GeminiFileInput 
+  GeminiFileInput,
+  askTutor,
+  gradeCase,
+  getEngineInfo,
+  EngineInfo,
+  CaseRecord
 } from './services/geminiService';
 import { extractImagesFromPDF } from './services/pdfService';
 import VitalsMonitor from './components/VitalsMonitor';
@@ -153,6 +159,39 @@ const DEFAULT_STATE: GameState = {
 
 const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+const ORDER_CATEGORIES: OrderCategory[] = [
+  'critical', 'medication', 'lab', 'imaging', 'procedure',
+  'exam', 'history', 'consult', 'disposition', 'other'
+];
+
+/** Tutor exchanges are private coaching, so the bedside engine never sees them. */
+const isTutorMessage = (m: Message) => m.type === 'tutor' || m.type === 'tutorQuestion';
+const bedsideMessages = (messages: Message[]) => messages.filter(m => !isTutorMessage(m));
+
+/** Snapshot of the case for the tutor and the grader. */
+const buildCaseRecord = (s: GameState, extraOrders: OrderLogEntry[] = [], extraMessages: Message[] = []): CaseRecord => {
+  const clock = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const v = s.vitals;
+  return {
+    context: s.caseContext,
+    diagnosis: s.hiddenDiagnosis,
+    criticalActions: s.criticalActions || [],
+    learningPoints: s.learningPoints || [],
+    vitals: `HR ${v.hr}, BP ${v.bpSystolic}/${v.bpDiastolic}, RR ${v.rr}, SpO2 ${v.o2}%, T ${v.temp}, ${v.rhythm} (${s.vitalTrend})`,
+    orderLog: [...extraOrders, ...(s.orderLog || [])]
+      .slice()
+      .reverse()
+      .map(o => `${clock(o.timestamp)}  ${o.label} [${o.category}${o.critical ? ', critical' : ''}]`),
+    differential: (s.workingDiagnoses || []).map(d =>
+      d.confidence === 'leading' ? `${d.name} (leading)` : d.confidence === 'ruled-out' ? `${d.name} (ruled out)` : d.name
+    ),
+    transcript: bedsideMessages([...s.messages, ...extraMessages]).map(
+      m => `${m.role === 'user' ? 'DOCTOR' : 'SIM'}: ${m.content}`
+    ),
+    hintsUsed: s.hintsUsed || 0
+  };
+};
+
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(() => {
     try {
@@ -180,6 +219,8 @@ const App: React.FC = () => {
     localStorage.setItem('medisim_er_level', level);
   }, [level]);
   const [isLoading, setIsLoading] = useState(false);
+  const [engine, setEngine] = useState<EngineInfo | null>(null);
+  useEffect(() => { getEngineInfo().then(setEngine); }, []);
   const [error, setError] = useState<string | null>(null);
   const loadingMessages = [
     "Consulting National Specialty Guidelines...",
@@ -385,23 +426,23 @@ const App: React.FC = () => {
   ) => {
     if (isLoading) return;
 
-    const entries: OrderLogEntry[] = (
-      logEntries || [
-        {
-          label: labelForOrder(actionText),
-          detail: actionText,
-          category: classifyOrder(actionText) as OrderCategory
-        }
-      ]
-    ).map(e => ({ ...e, id: newId(), timestamp: Date.now() }));
+    const stamp = (list: Omit<OrderLogEntry, 'id' | 'timestamp'>[]): OrderLogEntry[] =>
+      list.map(e => ({ ...e, id: newId(), timestamp: Date.now() }));
+    const locallyMatched = () =>
+      stamp([{ label: labelForOrder(actionText), detail: actionText, category: classifyOrder(actionText) as OrderCategory }]);
 
+    const userMsg: Message = { role: 'user', content: actionText, timestamp: Date.now() };
+    // Clicked orders are logged straight away; free text / dictation is logged
+    // once the engine says which orders it understood.
+    const clickedEntries = logEntries ? stamp(logEntries) : [];
     setGameState(prev => ({
       ...prev,
-      messages: [...prev.messages, { role: 'user', content: actionText, timestamp: Date.now() }],
-      orderLog: [...entries, ...(prev.orderLog || [])]
+      messages: [...prev.messages, userMsg],
+      orderLog: [...clickedEntries, ...(prev.orderLog || [])]
     }));
     
     setIsLoading(true);
+    let freeTextLogged = !!logEntries;
     try {
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error("Clinical engine timed out. Please try again.")), 90000)
@@ -410,7 +451,7 @@ const App: React.FC = () => {
       const response = await Promise.race([
         progressSimulation(
           gameState.caseContext, 
-          gameState.messages.map(m => m.content), 
+          bedsideMessages(gameState.messages).map(m => m.content), 
           actionText, 
           gameState.visuals,
           gameState.learningPoints,
@@ -421,6 +462,19 @@ const App: React.FC = () => {
         ),
         timeoutPromise
       ]) as SimulationResponse;
+
+      let understood: OrderLogEntry[] = [];
+      if (!logEntries) {
+        understood = Array.isArray(response.interpretedOrders)
+          ? stamp(response.interpretedOrders.map(o => ({
+              label: String(o.label),
+              detail: actionText,
+              category: ORDER_CATEGORIES.includes(o.category) ? o.category : (classifyOrder(o.label) as OrderCategory),
+              critical: !!o.critical
+            })))
+          : locallyMatched(); // engine didn't say — fall back to local matching
+        freeTextLogged = true;
+      }
       
       const sysMsg: Message = {
         role: 'assistant',
@@ -428,6 +482,12 @@ const App: React.FC = () => {
         timestamp: Date.now(),
         clinicalRationale: response.clinicalRationale,
         imageUrl: response.imageIdToDisplay ? gameState.visuals.find(v => v.id === response.imageIdToDisplay)?.data : undefined
+      };
+      const reviewMsg: Message = {
+        role: 'assistant',
+        type: 'success',
+        content: 'Case closed. Your attending is reviewing the whole case…',
+        timestamp: Date.now()
       };
 
       setGameState(prev => {
@@ -439,7 +499,8 @@ const App: React.FC = () => {
           ...prev,
           vitals: response.updatedVitals,
           vitalTrend: response.vitalTrend,
-          messages: [...prev.messages, sysMsg],
+          messages: [...prev.messages, sysMsg, ...(response.isCaseOver ? [reviewMsg] : [])],
+          orderLog: [...understood, ...(prev.orderLog || [])],
           labResults: [...(prev.labResults || []), ...incomingLabs],
           diagnosticReports: [
             ...incomingReports.map((r: any) => ({ ...r, timestamp: Date.now() })),
@@ -448,25 +509,41 @@ const App: React.FC = () => {
           physicalExam: [
             ...incomingExam.map((e: any) => ({ ...e, timestamp: Date.now() })),
             ...(prev.physicalExam || [])
-          ],
-          stage: response.isCaseOver ? 'debrief' : 'playing' as any,
-          debriefData: response.isCaseOver ? {
-             ...response.debriefData!,
-             cmeLearningPoints: prev.learningPoints,
-             correctDiagnosis: prev.hiddenDiagnosis,
-             submittedDiagnoses: prev.workingDiagnoses
-          } : prev.debriefData
+          ]
         };
       });
 
       if (response.isCaseOver) {
-        const debrief = response.debriefData || {
+        const preliminary = response.debriefData;
+        // Dedicated full-case review; falls back to the engine's quick debrief.
+        let graded: Partial<DebriefData> = {};
+        try {
+          const record = buildCaseRecord(
+            { ...gameState, vitals: response.updatedVitals, vitalTrend: response.vitalTrend },
+            [...understood, ...clickedEntries],
+            [userMsg, sysMsg]
+          );
+          graded = { ...(await gradeCase(record, preliminary, gameState.level)), graded: true };
+        } catch (gradeErr: any) {
+          graded = { gradeError: gradeErr.message || 'Grading failed.' };
+        }
+
+        const debrief: DebriefData = {
           outcome: "Case Completed",
           score: 0,
           summary: "No summary provided by clinical engine.",
+          performanceBreakdown: { historyDataCollection: 0, differentialDiagnosis: 0, medicalManagement: 0, communicationEfficiency: 0 },
           criticalEvents: [],
-          missedOpportunities: []
+          missedOpportunities: [],
+          ...(preliminary || {}),
+          ...graded,
+          cmeLearningPoints: gameState.learningPoints,
+          correctDiagnosis: gameState.hiddenDiagnosis,
+          submittedDiagnoses: gameState.workingDiagnoses,
+          hintsUsed: gameState.hintsUsed || 0
         };
+
+        setGameState(prev => ({ ...prev, stage: 'debrief', debriefData: debrief }));
 
         const newEntry: any = {
           timestamp: Date.now(),
@@ -503,7 +580,59 @@ const App: React.FC = () => {
         }
       }
     } catch (err: any) {
+      if (!freeTextLogged) {
+        const fallback = locallyMatched();
+        setGameState(prev => ({ ...prev, orderLog: [...fallback, ...(prev.orderLog || [])] }));
+      }
       setError(err.message || "Connection to clinical engine failed.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Private tutor. An empty ask escalates nudge -> focused hint -> explicit
+   * next step; a typed question gets a direct answer.
+   */
+  const handleAskTutor = async (question: string) => {
+    if (isLoading) return;
+    const q = question.trim();
+    const hintsUsed = (gameState.hintsUsed || 0) + (q ? 0 : 1);
+    const hintLevel = q ? Math.max(2, Math.min(3, hintsUsed || 1)) : Math.min(3, hintsUsed);
+    const questionMsg: Message | null = q
+      ? { role: 'user', type: 'tutorQuestion', content: q, timestamp: Date.now() }
+      : null;
+    setGameState(prev => ({
+      ...prev,
+      hintsUsed,
+      messages: questionMsg ? [...prev.messages, questionMsg] : prev.messages
+    }));
+
+    setIsLoading(true);
+    try {
+      const reply = await askTutor(buildCaseRecord({ ...gameState, hintsUsed }), hintLevel, q, gameState.level);
+      setGameState(prev => ({
+        ...prev,
+        messages: [...prev.messages, {
+          role: 'assistant',
+          type: 'tutor',
+          content: reply.hint || 'Reassess the patient from the top: airway, breathing, circulation.',
+          why: reply.why,
+          watchFor: reply.watchFor,
+          hintLevel: q ? undefined : hintLevel,
+          timestamp: Date.now()
+        }]
+      }));
+    } catch (err: any) {
+      setGameState(prev => ({
+        ...prev,
+        messages: [...prev.messages, {
+          role: 'assistant',
+          type: 'tutor',
+          content: `Tutor unavailable: ${err.message || 'unknown error'}`,
+          timestamp: Date.now()
+        }]
+      }));
     } finally {
       setIsLoading(false);
     }
@@ -780,6 +909,8 @@ const App: React.FC = () => {
                 <ChatInterface messages={gameState.messages} isLoading={isLoading} />
                 <Controls
                   onAction={handleUserAction}
+                  onAskTutor={handleAskTutor}
+                  hintsUsed={gameState.hintsUsed || 0}
                   disabled={isLoading}
                   criticalActions={gameState.criticalActions}
                   suggestionsExpanded={getLevel(gameState.level).suggestionsExpandedByDefault}
@@ -888,7 +1019,15 @@ const App: React.FC = () => {
               <h1 className="text-lg font-black tracking-tighter uppercase italic">MediSim <span className="text-emerald-500 not-italic">ER</span></h1>
               <div className="flex items-center gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                <span className="text-[8px] font-black text-slate-500 uppercase tracking-[0.3em]">Clinical Engine: Claude</span>
+                <span
+                  className={cn(
+                    "text-[8px] font-black uppercase tracking-[0.3em]",
+                    engine && !engine.configured ? "text-red-400" : "text-slate-500"
+                  )}
+                  title={engine ? `Model: ${engine.model}` : undefined}
+                >
+                  Clinical Engine: {engine ? (engine.provider === 'gemini' ? 'Gemini' : 'Claude') + (engine.configured ? '' : ' — no API key set') : '…'}
+                </span>
               </div>
             </div>
           </div>

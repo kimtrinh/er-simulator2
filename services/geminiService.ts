@@ -1,8 +1,8 @@
-import { Vitals, SimulationResponse, ExtractedImage, TrainingLevel } from "../types";
+import { Vitals, SimulationResponse, ExtractedImage, TrainingLevel, DebriefData } from "../types";
 
 /**
  * Thin client for the clinical simulation engine. All AI calls go through the
- * app's own server (which talks to Claude), so no API key ever reaches the
+ * app's own server (which talks to Claude or Gemini), so no API key ever reaches the
  * browser. Voice playback is handled client-side via the Web Speech API
  * (see ChatInterface), so there is no speech endpoint here.
  */
@@ -64,3 +64,51 @@ export const progressSimulation = async (
     workingDiagnoses,
     level,
   });
+
+export interface EngineInfo {
+  provider: 'claude' | 'gemini';
+  model: string;
+  configured: boolean;
+}
+
+export const getEngineInfo = async (): Promise<EngineInfo | null> => {
+  try {
+    const res = await fetch("/api/health");
+    const data = await res.json();
+    return typeof data.engine === "object" ? data.engine : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Everything the tutor and the grader see about the case so far. */
+export interface CaseRecord {
+  context: string;
+  diagnosis: string;
+  criticalActions: string[];
+  learningPoints: string[];
+  vitals: string;
+  orderLog: string[];
+  differential: string[];
+  transcript: string[];
+  hintsUsed: number;
+}
+
+export interface TutorReply {
+  hint: string;
+  why: string;
+  watchFor: string;
+}
+
+export const askTutor = async (
+  record: CaseRecord,
+  hintLevel: number,
+  question: string,
+  level: TrainingLevel
+): Promise<TutorReply> => postJSON("/api/sim/tutor", { record, hintLevel, question, level });
+
+export const gradeCase = async (
+  record: CaseRecord,
+  preliminary: Partial<DebriefData> | undefined,
+  level: TrainingLevel
+): Promise<Partial<DebriefData>> => postJSON("/api/sim/grade", { record, preliminary, level });

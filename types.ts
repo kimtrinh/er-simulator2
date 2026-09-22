@@ -16,10 +16,15 @@ export interface Vitals {
 export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
-  type?: 'text' | 'alert' | 'success';
+  /** 'tutor' / 'tutorQuestion' are private coaching — never sent to the bedside engine. */
+  type?: 'text' | 'alert' | 'success' | 'tutor' | 'tutorQuestion';
   timestamp: number;
   imageUrl?: string;
   clinicalRationale?: string;
+  /** Tutor messages: the teaching behind the hint, and an upcoming trap. */
+  why?: string;
+  watchFor?: string;
+  hintLevel?: number;
 }
 
 export interface CriticalEvent {
@@ -49,6 +54,20 @@ export interface DebriefData {
   correctDiagnosis?: string;
   /** Snapshot of the differential the player submitted during the case. */
   submittedDiagnoses?: WorkingDiagnosis[];
+  /** Full-case review: every expected action and any unnecessary/harmful order. */
+  actionReview?: ActionReviewItem[];
+  /** Concrete habits to change next time. */
+  nextTime?: string[];
+  /** True when the dedicated grading pass ran (vs. the engine's quick debrief). */
+  graded?: boolean;
+  gradeError?: string;
+  hintsUsed?: number;
+}
+
+export interface ActionReviewItem {
+  action: string;
+  status: 'done' | 'late' | 'missed' | 'unnecessary' | 'harmful';
+  feedback: string;
 }
 
 export interface ExtractedImage {
@@ -144,6 +163,8 @@ export interface GameState {
   criticalActions: string[];
   /** Training level the case was pitched at. */
   level: TrainingLevel;
+  /** Tutor hints requested this case (questions don't count). */
+  hintsUsed?: number;
 }
 
 export interface ActionPayload {
@@ -162,4 +183,6 @@ export interface SimulationResponse {
   clinicalRationale?: string;
   imageIdToDisplay?: string;
   debriefData?: DebriefData;
+  /** The orders the engine understood from free-text / dictated input. */
+  interpretedOrders?: { label: string; category: OrderCategory; critical: boolean }[];
 }

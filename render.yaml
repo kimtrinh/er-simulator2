@@ -1,6 +1,9 @@
 # One-click deploy config for Render (https://render.com).
 # Render reads this "blueprint" and provisions the site automatically — the only
-# thing you set by hand is your Anthropic API key.
+# thing you set by hand is ONE API key in Render's dashboard:
+#   GEMINI_API_KEY    — free, from https://aistudio.google.com/apikey (no billing needed)
+#   ANTHROPIC_API_KEY — paid, from https://console.anthropic.com/
+# Leave the other one blank. If both are set, Claude is used unless AI_PROVIDER=gemini.
 services:
   - type: web
     name: medisim-er
@@ -14,5 +17,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      - key: ANTHROPIC_API_KEY
+      - key: GEMINI_API_KEY
         sync: false # you paste your key into Render's dashboard; it is never committed
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: AI_PROVIDER
+        sync: false # optional: "gemini" or "claude"
