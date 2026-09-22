@@ -28,10 +28,13 @@
       <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
     </div>
     <div>
-      <h1 class="text-base font-black tracking-tight uppercase italic">MediSim <span class="text-emerald-500 not-italic">ER</span></h1>
+      <div class="flex items-center gap-2">
+        <h1 class="text-base font-black tracking-tight uppercase italic">MediSim <span class="text-emerald-500 not-italic">ER</span></h1>
+        <button id="modeBadge" class="px-2 py-0.5 rounded-md border text-[8px] font-black uppercase tracking-[.2em] transition" title="Which engine is running the case — click to change"></button>
+      </div>
       <div class="flex items-center gap-1.5">
         <span id="connDot" class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
-        <span id="connText" class="text-[8px] font-black text-slate-500 uppercase tracking-[.2em]">Local Engine: offline</span>
+        <span id="connText" class="text-[8px] font-black text-slate-500 uppercase tracking-[.2em]">Local Engine: not checked</span>
       </div>
     </div>
   </div>
@@ -54,10 +57,22 @@
 <div id="settingsModal" class="fixed inset-0 z-50 hidden bg-slate-950/90 backdrop-blur-xl items-center justify-center p-4">
   <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-7 space-y-5">
     <div class="flex justify-between items-center">
-      <h2 class="text-xl font-black">Local Model Settings</h2>
+      <h2 class="text-xl font-black">Engine Settings</h2>
       <button id="closeSettings" class="text-slate-500 hover:text-white text-2xl leading-none">&times;</button>
     </div>
     <div class="space-y-1">
+      <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Engine</label>
+      <div class="grid grid-cols-2 gap-2">
+        <button data-provider="local" class="provBtn py-3 rounded-xl border text-xs font-black uppercase tracking-widest transition">Local model</button>
+        <button data-provider="claude" class="provBtn py-3 rounded-xl border text-xs font-black uppercase tracking-widest transition">Claude API key</button>
+      </div>
+    </div>
+    <div id="apiKeyRow" class="space-y-1 hidden">
+      <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Anthropic API key</label>
+      <input id="apiKey" type="password" autocomplete="off" spellcheck="false" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm mono focus:outline-none focus:border-amber-500/50" placeholder="sk-ant-..." />
+      <p class="text-[11px] text-slate-500">Stored only in this browser (localStorage) and sent only to api.anthropic.com. Don't use this mode on a shared computer.</p>
+    </div>
+    <div id="baseURLRow" class="space-y-1">
       <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Server URL (LM Studio / Ollama)</label>
       <input id="baseURL" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500/50" placeholder="http://localhost:1234/v1" />
     </div>
@@ -69,13 +84,19 @@
       </div>
       <p id="detectMsg" class="text-[11px] text-slate-500"></p>
     </div>
-    <div class="space-y-1">
+    <div id="tempRow" class="space-y-1">
       <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Creativity (temperature): <span id="tempVal">0.7</span></label>
       <input id="temp" type="range" min="0" max="1.2" step="0.1" value="0.7" class="w-full accent-emerald-500" />
     </div>
-    <button id="testBtn" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl transition">Test connection</button>
-    <div class="text-[11px] text-slate-500 leading-relaxed bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+    <div>
+      <button id="testBtn" class="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold py-3 rounded-xl transition">Test connection</button>
+      <p id="testMsg" class="text-[12px] text-center mt-2 min-h-[1em]"></p>
+    </div>
+    <div id="localHelp" class="text-[11px] text-slate-500 leading-relaxed bg-slate-950/60 border border-slate-800 rounded-xl p-3">
       <b class="text-slate-400">LM Studio setup:</b> Developer tab → <b>Start Server</b> (port 1234) → load your Qwen model → enable <b>CORS</b> in server settings (required so this page can reach it). Then click <b>Detect</b> above.
+    </div>
+    <div id="claudeHelp" class="hidden text-[11px] text-slate-500 leading-relaxed bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+      <b class="text-slate-400">Claude API setup:</b> create a key at <b>console.anthropic.com</b> → paste it above → <b>Test connection</b>. The page calls Claude directly from your browser, so usage is billed to that key.
     </div>
   </div>
 </div>
@@ -85,6 +106,10 @@
 const DEFAULT_VITALS = { hr:80, bpSystolic:120, bpDiastolic:80, rr:16, o2:98, temp:37.0, rhythm:'Sinus Rhythm' };
 const S = {
   stage:'setup',
+  // 'local' = OpenAI-compatible server (LM Studio / Ollama); 'claude' = Anthropic API with the player's own key.
+  provider: localStorage.getItem('ms_provider')==='claude' ? 'claude' : 'local',
+  apiKey: localStorage.getItem('ms_apiKey') || '',
+  claudeModel: localStorage.getItem('ms_claudeModel') || 'claude-opus-5',
   baseURL: localStorage.getItem('ms_baseURL') || 'http://localhost:1234/v1',
   model: localStorage.getItem('ms_model') || '',
   temperature: parseFloat(localStorage.getItem('ms_temp') || '0.7'),
@@ -328,8 +353,25 @@ function logOrders(action, entries){
   S.orderLog = list.map(e=>({ label:e.label, category:e.category||'other', critical:!!e.critical, time })).concat(S.orderLog);
 }
 
-// ===================== MODEL API (OpenAI-compatible) =====================
+// ===================== MODEL API =====================
+const CLAUDE_API = 'https://api.anthropic.com/v1';
+const isClaude = () => S.provider==='claude';
+const activeModel = () => isClaude() ? S.claudeModel : S.model;
+function claudeHeaders(){
+  return {
+    'x-api-key': S.apiKey,
+    'anthropic-version': '2023-06-01',
+    // Required for calling the API straight from a browser page (CORS).
+    'anthropic-dangerous-direct-browser-access': 'true'
+  };
+}
+
 async function callModel(messages){
+  return isClaude() ? callClaude(messages) : callLocal(messages);
+}
+
+// OpenAI-compatible local server (LM Studio, Ollama, llama.cpp).
+async function callLocal(messages){
   const url = S.baseURL.replace(/\/+$/,'') + '/chat/completions';
   const res = await fetch(url, {
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -349,6 +391,36 @@ async function callModel(messages){
   }
   const data = await res.json();
   return data.choices?.[0]?.message?.content || '';
+}
+
+// Anthropic Messages API with the player's own key. System turns move to the
+// top-level `system` field; temperature is not sent (current Claude models reject it).
+async function callClaude(messages){
+  if(!S.apiKey) throw new Error('No Anthropic API key set. Open Settings ⚙ and paste your key.');
+  const system = messages.filter(m=>m.role==='system').map(m=>m.content).join('\n\n');
+  const body = {
+    model: S.claudeModel || 'claude-opus-5',
+    max_tokens: 16000,
+    system,
+    messages: messages.filter(m=>m.role!=='system').map(m=>({role:m.role, content:m.content}))
+  };
+  const headers = {...claudeHeaders(), 'Content-Type':'application/json'};
+  // On models that support it, let a policy decline on clinical content be
+  // retried on a fallback model instead of ending the turn.
+  if(/^claude-(opus-5|fable-5-1)$/.test(body.model)){
+    headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
+    body.fallbacks = 'default';
+  }
+  const res = await fetch(CLAUDE_API+'/messages', { method:'POST', headers, body: JSON.stringify(body) });
+  if(!res.ok){
+    const t = await res.text().catch(()=> '');
+    let msg = t.slice(0,200);
+    try{ msg = JSON.parse(t).error?.message || msg; }catch(_){}
+    throw new Error('Claude API returned '+res.status+(res.status===401?' (invalid API key)':'')+'. '+msg);
+  }
+  const data = await res.json();
+  if(data.stop_reason==='refusal') throw new Error('Claude declined this request'+(data.stop_details?.explanation?': '+data.stop_details.explanation:'.')+' Try rephrasing.');
+  return (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
 }
 
 function extractJSON(text){
@@ -546,9 +618,13 @@ function renderSetup(){
     <div class="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(16,185,129,.06),transparent_70%)]"></div>
     <div class="max-w-2xl w-full z-10 fade">
       <div class="text-center mb-10">
-        <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-black uppercase tracking-[.3em] mb-6">Runs entirely on your local model</div>
+        ${isClaude()
+          ? `<div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[10px] font-black uppercase tracking-[.3em] mb-6">API mode · ${esc(S.claudeModel)}</div>`
+          : `<div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-black uppercase tracking-[.3em] mb-6">Runs entirely on your local model</div>`}
         <h1 class="text-6xl md:text-7xl font-black text-white tracking-tighter mb-3 uppercase italic">MediSim <span class="text-emerald-500 not-italic">ER</span></h1>
-        <p class="text-slate-500 text-base">High-fidelity bedside simulation powered by your own model in LM Studio. No keys, no cloud, no cost.</p>
+        <p class="text-slate-500 text-base">${isClaude()
+          ? 'High-fidelity bedside simulation powered by Claude through your Anthropic API key. Usage is billed to that key.'
+          : 'High-fidelity bedside simulation powered by your own model in LM Studio. No keys, no cloud, no cost.'}</p>
       </div>
       <div class="bg-slate-900/50 border border-slate-800 rounded-3xl p-7 mb-5">
         <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Training level</label>
@@ -1068,24 +1144,74 @@ function showError(msg){
 }
 
 // ===================== CONNECTION TEST / DETECT =====================
+// Header badge + status line. The header stays on screen in setup, the sim, and
+// the debrief, so the player can always see which engine is running the case.
+function setConn(state){ // 'connected' | 'offline' | 'unchecked'
+  const claude=isClaude();
+  const badge=$('modeBadge');
+  badge.textContent=claude?'API mode':'Local mode';
+  badge.className='px-2 py-0.5 rounded-md border text-[8px] font-black uppercase tracking-[.2em] transition '+
+    (claude?'bg-amber-500/10 border-amber-500/40 text-amber-400 hover:bg-amber-500/20':'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20');
+  const label=claude?'Claude API':'Local Engine';
+  const model=activeModel();
+  $('connDot').className='w-1.5 h-1.5 rounded-full '+(state==='connected'?'bg-emerald-500 pulse-dot':state==='offline'?'bg-red-500':'bg-slate-600');
+  $('connText').textContent=label+': '+(state==='connected'?'connected'+(model?' · '+model:''):state==='offline'?'offline':'not checked');
+}
+
+async function fetchWithTimeout(url, opts, ms){
+  const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(), ms);
+  try{ return await fetch(url, {...opts, signal:ctl.signal}); }
+  finally{ clearTimeout(t); }
+}
+
+// Lists models on the active engine. Throws with a player-readable message.
+async function listModels(){
+  if(isClaude()){
+    if(!S.apiKey) throw new Error('Paste your Anthropic API key first.');
+    let res;
+    try{ res=await fetchWithTimeout(CLAUDE_API+'/models?limit=100',{headers:claudeHeaders()},10000); }
+    catch(e){ throw new Error(e.name==='AbortError'?'api.anthropic.com did not answer within 10 s.':'Could not reach api.anthropic.com (network blocked or offline).'); }
+    if(res.status===401) throw new Error('The API key was rejected (401). Check it was copied in full.');
+    if(res.status===403) throw new Error('The API key does not have permission (403).');
+    if(!res.ok) throw new Error('Claude API returned HTTP '+res.status+'.');
+    return ((await res.json()).data||[]).map(m=>m.id);
+  }
+  let res;
+  try{ res=await fetchWithTimeout(S.baseURL.replace(/\/+$/,'')+'/models',{},8000); }
+  catch(e){ throw new Error(e.name==='AbortError'
+    ? S.baseURL+' did not answer within 8 s. Is the LM Studio server started?'
+    : 'Cannot reach '+S.baseURL+'. Start the server in LM Studio and enable CORS.'); }
+  if(!res.ok) throw new Error(S.baseURL+' returned HTTP '+res.status+'.');
+  return ((await res.json()).data||[]).map(m=>m.id);
+}
+
 async function testConnection(silent){
+  const btn=$('testBtn');
+  if(!silent){ btn.disabled=true; btn.textContent='Testing…'; $('testMsg').innerHTML='<span class="text-slate-400">Contacting '+esc(isClaude()?'api.anthropic.com':S.baseURL)+'…</span>'; }
   try{
-    const res=await fetch(S.baseURL.replace(/\/+$/,'')+'/models');
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    const ids=(data.data||[]).map(m=>m.id);
-    $('connDot').className='w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot';
-    $('connText').textContent='Local Engine: connected';
-    if(!silent && $('detectMsg')) $('detectMsg').innerHTML='<span class="text-emerald-400">Connected. Models: '+esc(ids.join(', ')||'(none loaded)')+'</span>';
-    if(!S.model && ids[0]){ S.model=ids[0]; if($('model'))$('model').value=ids[0]; localStorage.setItem('ms_model',ids[0]); }
-    if(S.stage==='setup'&&$('setupHint')&&!$('setupHint').textContent) $('setupHint').textContent='Connected to local model — ready.';
+    const ids=await listModels();
+    if(isClaude()){
+      if(!silent){
+        const missing=ids.length && !ids.includes(S.claudeModel);
+        $('detectMsg').innerHTML=missing
+          ? '<span class="text-amber-400">'+esc(S.claudeModel||'(blank)')+' is not available on this key. Available: '+esc(ids.join(', '))+'</span>'
+          : '<span class="text-emerald-400">Models on this key: '+esc(ids.join(', '))+'</span>';
+      }
+    }else{
+      if(!silent && $('detectMsg')) $('detectMsg').innerHTML='<span class="text-emerald-400">Connected. Models: '+esc(ids.join(', ')||'(none loaded)')+'</span>';
+      if(!S.model && ids[0]){ S.model=ids[0]; if($('model'))$('model').value=ids[0]; localStorage.setItem('ms_model',ids[0]); }
+    }
+    setConn('connected');
+    if(!silent) $('testMsg').innerHTML='<span class="text-emerald-400">✓ Connected — '+esc(isClaude()?'Claude API ('+S.claudeModel+')':'local engine ('+(S.model||'no model loaded')+')')+'</span>';
+    if(S.stage==='setup'&&$('setupHint')&&!S.loading) $('setupHint').textContent=isClaude()?'Connected to Claude API — ready.':'Connected to local model — ready.';
     return ids;
   }catch(e){
-    $('connDot').className='w-1.5 h-1.5 rounded-full bg-red-500';
-    $('connText').textContent='Local Engine: offline';
-    if(!silent && $('detectMsg')) $('detectMsg').innerHTML='<span class="text-red-400">Cannot reach '+esc(S.baseURL)+'. Start the server in LM Studio and enable CORS.</span>';
-    if(S.stage==='setup'&&$('setupHint')) $('setupHint').innerHTML='<span class="text-slate-500">Tip: open Settings ⚙ and connect to LM Studio first.</span>';
+    setConn('offline');
+    if(!silent) $('testMsg').innerHTML='<span class="text-red-400">✕ '+esc(e.message)+'</span>';
+    if(S.stage==='setup'&&$('setupHint')) $('setupHint').innerHTML='<span class="text-slate-500">'+esc(isClaude()?'Tip: open Settings ⚙ and check your Anthropic API key.':'Tip: open Settings ⚙ and connect to LM Studio first.')+'</span>';
     return null;
+  }finally{
+    if(!silent){ btn.disabled=false; btn.textContent='Test connection'; }
   }
 }
 
@@ -1102,21 +1228,51 @@ function startDictation(){
 
 // ===================== SETTINGS WIRING =====================
 $('settingsBtn').onclick=()=>{ openSettings(); };
+$('modeBadge').onclick=()=>{ openSettings(); };
 $('closeSettings').onclick=()=>{ $('settingsModal').classList.add('hidden'); $('settingsModal').classList.remove('flex'); };
+function syncSettingsForm(){
+  const claude=isClaude();
+  document.querySelectorAll('.provBtn').forEach(b=>{
+    const on=b.dataset.provider===S.provider;
+    b.className='provBtn py-3 rounded-xl border text-xs font-black uppercase tracking-widest transition '+
+      (on?(claude?'bg-amber-500/10 border-amber-500/50 text-amber-400':'bg-emerald-500/10 border-emerald-500/50 text-emerald-400'):'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-700');
+  });
+  ['apiKeyRow','claudeHelp'].forEach(id=>$(id).classList.toggle('hidden',!claude));
+  ['baseURLRow','tempRow','localHelp'].forEach(id=>$(id).classList.toggle('hidden',claude));
+  $('model').value=activeModel();
+  $('model').placeholder=claude?'e.g. claude-opus-5':'e.g. qwen2.5-32b-instruct';
+  $('detectMsg').textContent=''; $('testMsg').textContent='';
+}
 function openSettings(){
-  $('baseURL').value=S.baseURL; $('model').value=S.model; $('temp').value=S.temperature; $('tempVal').textContent=S.temperature;
+  $('baseURL').value=S.baseURL; $('apiKey').value=S.apiKey; $('temp').value=S.temperature; $('tempVal').textContent=S.temperature;
+  syncSettingsForm();
   $('settingsModal').classList.remove('hidden'); $('settingsModal').classList.add('flex');
 }
-$('baseURL').addEventListener('change',e=>{ S.baseURL=e.target.value.trim(); localStorage.setItem('ms_baseURL',S.baseURL); });
-$('model').addEventListener('change',e=>{ S.model=e.target.value.trim(); localStorage.setItem('ms_model',S.model); });
+// Read every field, not just the ones that fired 'change' — clicking Test straight
+// after typing must use what's in the box.
+function saveSettingsForm(){
+  S.baseURL=$('baseURL').value.trim(); localStorage.setItem('ms_baseURL',S.baseURL);
+  S.apiKey=$('apiKey').value.trim(); localStorage.setItem('ms_apiKey',S.apiKey);
+  const m=$('model').value.trim();
+  if(isClaude()){ S.claudeModel=m; localStorage.setItem('ms_claudeModel',m); }
+  else { S.model=m; localStorage.setItem('ms_model',m); }
+}
+document.querySelectorAll('.provBtn').forEach(b=>b.onclick=()=>{
+  saveSettingsForm();
+  S.provider=b.dataset.provider; localStorage.setItem('ms_provider',S.provider);
+  syncSettingsForm(); setConn('unchecked');
+  if(S.stage==='setup'){ const t=$('topic')?.value; renderSetup(); if(t&&$('topic')) $('topic').value=t; }
+});
+['baseURL','apiKey','model'].forEach(id=>$(id).addEventListener('change',()=>{ saveSettingsForm(); setConn('unchecked'); }));
 $('temp').addEventListener('input',e=>{ S.temperature=parseFloat(e.target.value); $('tempVal').textContent=S.temperature; localStorage.setItem('ms_temp',S.temperature); });
-$('detectBtn').onclick=()=>{ S.baseURL=$('baseURL').value.trim(); testConnection(false); };
-$('testBtn').onclick=()=>{ S.baseURL=$('baseURL').value.trim(); localStorage.setItem('ms_baseURL',S.baseURL); testConnection(false); };
+$('detectBtn').onclick=()=>{ saveSettingsForm(); testConnection(false); };
+$('testBtn').onclick=()=>{ saveSettingsForm(); testConnection(false); };
 $('ttsBtn').onclick=()=>{ S.tts=!S.tts; localStorage.setItem('ms_tts',S.tts?'1':'0'); if(!S.tts&&'speechSynthesis'in window) speechSynthesis.cancel();
   $('ttsBtn').className='p-2.5 rounded-xl border transition '+(S.tts?'bg-emerald-500/10 border-emerald-500/40 text-emerald-400':'bg-slate-900 border-slate-800 text-slate-500'); };
 $('resetBtn').onclick=()=>{ if('speechSynthesis'in window)speechSynthesis.cancel(); clearInterval(driftTimer); cancelAnimationFrame(ecgRAF); renderSetup(); };
 
 // init
+setConn('unchecked');
 if(!S.tts) $('ttsBtn').className='p-2.5 rounded-xl border transition bg-slate-900 border-slate-800 text-slate-500';
 renderSetup();
 </script>
