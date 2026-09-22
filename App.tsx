@@ -18,7 +18,8 @@ import {
   ScrollText,
   X,
   GraduationCap,
-  CheckCircle2
+  CheckCircle2,
+  KeyRound
 } from 'lucide-react';
 import {
   GameState,
@@ -53,8 +54,12 @@ import {
   gradeCase,
   getEngineInfo,
   EngineInfo,
-  CaseRecord
+  CaseRecord,
+  KeySettings,
+  loadKeySettings,
+  activeCredential
 } from './services/geminiService';
+import KeySettingsModal from './components/KeySettingsModal';
 import { extractImagesFromPDF } from './services/pdfService';
 import VitalsMonitor from './components/VitalsMonitor';
 import ChatInterface from './components/ChatInterface';
@@ -221,6 +226,24 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [engine, setEngine] = useState<EngineInfo | null>(null);
   useEffect(() => { getEngineInfo().then(setEngine); }, []);
+
+  // Bring-your-own-key: every player uses their own key (or the owner code).
+  const [keySettings, setKeySettings] = useState<KeySettings>(loadKeySettings);
+  const [keyModal, setKeyModal] = useState<{ open: boolean; reason?: string | null }>({ open: false });
+  const credential = activeCredential(keySettings);
+  const openKeySettings = (reason?: string) => setKeyModal({ open: true, reason: reason || null });
+
+  /** Route "needs a key" failures to Settings; everything else to the error modal. */
+  const reportEngineError = (err: any, fallback: string) => {
+    if (err?.needKey) openKeySettings(err.message);
+    else setError(err?.message || fallback);
+  };
+  /** Returns false (and opens Settings) when this browser has no key yet. */
+  const requireKey = () => {
+    if (activeCredential(loadKeySettings()).kind !== 'none') return true;
+    openKeySettings('Add your own API key to start — a free Gemini key works.');
+    return false;
+  };
   const [error, setError] = useState<string | null>(null);
   const loadingMessages = [
     "Consulting National Specialty Guidelines...",
@@ -352,6 +375,7 @@ const App: React.FC = () => {
 
   const handleStartFromTopic = async () => {
     if (!topicInput.trim()) return;
+    if (!requireKey()) return;
     setIsLoading(true);
     setGameState(prev => ({ ...prev, stage: 'analyzing' }));
 
@@ -371,7 +395,7 @@ const App: React.FC = () => {
         level
       });
     } catch (err: any) {
-      setError(err.message || "Failed to generate simulation from topic.");
+      reportEngineError(err, "Failed to generate simulation from topic.");
       setGameState(prev => ({ ...prev, stage: 'upload' }));
     } finally {
       setIsLoading(false);
@@ -380,6 +404,7 @@ const App: React.FC = () => {
 
   const processFiles = async (files: File[]) => {
     if (files.length === 0) return;
+    if (!requireKey()) return;
     setIsLoading(true);
     setGameState(prev => ({ ...prev, stage: 'analyzing' }));
 
@@ -413,7 +438,7 @@ const App: React.FC = () => {
         level
       });
     } catch (err: any) {
-      setError(err.message || "An error occurred during case initialization.");
+      reportEngineError(err, "An error occurred during case initialization.");
       setGameState(prev => ({ ...prev, stage: 'upload' }));
     } finally {
       setIsLoading(false);
@@ -584,7 +609,7 @@ const App: React.FC = () => {
         const fallback = locallyMatched();
         setGameState(prev => ({ ...prev, orderLog: [...fallback, ...(prev.orderLog || [])] }));
       }
-      setError(err.message || "Connection to clinical engine failed.");
+      reportEngineError(err, "Connection to clinical engine failed.");
     } finally {
       setIsLoading(false);
     }
@@ -624,6 +649,7 @@ const App: React.FC = () => {
         }]
       }));
     } catch (err: any) {
+      if (err?.needKey) openKeySettings(err.message);
       setGameState(prev => ({
         ...prev,
         messages: [...prev.messages, {
@@ -1019,15 +1045,20 @@ const App: React.FC = () => {
               <h1 className="text-lg font-black tracking-tighter uppercase italic">MediSim <span className="text-emerald-500 not-italic">ER</span></h1>
               <div className="flex items-center gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                <span
+                <button
+                  onClick={() => openKeySettings()}
                   className={cn(
-                    "text-[8px] font-black uppercase tracking-[0.3em]",
-                    engine && !engine.configured ? "text-red-400" : "text-slate-500"
+                    "text-[8px] font-black uppercase tracking-[0.3em] hover:underline",
+                    credential.kind === 'none' ? "text-red-400" : "text-slate-500"
                   )}
-                  title={engine ? `Model: ${engine.model}` : undefined}
+                  title="Change which API key this browser uses"
                 >
-                  Clinical Engine: {engine ? (engine.provider === 'gemini' ? 'Gemini' : 'Claude') + (engine.configured ? '' : ' — no API key set') : '…'}
-                </span>
+                  {credential.kind === 'key'
+                    ? `Clinical Engine: ${credential.provider === 'gemini' ? 'Gemini' : 'Claude'} · your key`
+                    : credential.kind === 'owner'
+                    ? 'Clinical Engine: owner key'
+                    : 'No API key — add yours'}
+                </button>
               </div>
             </div>
           </div>
@@ -1049,6 +1080,21 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => openKeySettings()}
+            className={cn(
+              "p-2.5 rounded-xl border transition-all flex items-center gap-2",
+              credential.kind === 'none'
+                ? "bg-red-500/10 border-red-500/40 text-red-400 hover:bg-red-500/20"
+                : "bg-slate-900 border-slate-800 text-slate-500 hover:text-amber-400 hover:border-amber-400/50"
+            )}
+            title="Your API key"
+          >
+            <KeyRound className="w-4 h-4" />
+            <span className="text-[10px] font-black uppercase tracking-widest hidden md:inline">
+              {credential.kind === 'none' ? 'Add Key' : 'API Key'}
+            </span>
+          </button>
           <button
             onClick={() => setShowHistory(true)}
             className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-500 hover:text-emerald-400 hover:border-emerald-400/50 transition-all flex items-center gap-2"
@@ -1109,6 +1155,13 @@ const App: React.FC = () => {
       </main>
 
       {error && <ErrorModal message={error} onDismiss={() => setError(null)} />}
+      <KeySettingsModal
+        open={keyModal.open}
+        reason={keyModal.reason}
+        ownerAccess={!!engine?.ownerAccess}
+        onClose={() => setKeyModal({ open: false })}
+        onSaved={setKeySettings}
+      />
       <AnimatePresence>
         {showHistory && <LearningLog history={history} onClose={() => setShowHistory(false)} />}
       </AnimatePresence>

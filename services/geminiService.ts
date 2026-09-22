@@ -12,16 +12,89 @@ export interface GeminiFileInput {
   data: string;
 }
 
-const postJSON = async (url: string, body: unknown) => {
+/* ------------------------------------------------------------------ */
+/* Bring-your-own-key                                                  */
+/* ------------------------------------------------------------------ */
+// Each player's key lives only in their own browser (localStorage) and is sent
+// with each request; the server uses it for that request and never stores it.
+// The site owner can instead enter the owner access code to use the server's key.
+
+export type KeyProvider = "gemini" | "claude";
+
+export interface KeySettings {
+  provider: KeyProvider;
+  geminiKey: string;
+  claudeKey: string;
+  accessCode: string;
+}
+
+const LS = {
+  provider: "medisim_key_provider",
+  gemini: "medisim_key_gemini",
+  claude: "medisim_key_claude",
+  code: "medisim_access_code",
+};
+
+const lsGet = (k: string) => {
+  try { return localStorage.getItem(k) || ""; } catch { return ""; }
+};
+const lsSet = (k: string, v: string) => {
+  try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {}
+};
+
+export const loadKeySettings = (): KeySettings => ({
+  provider: lsGet(LS.provider) === "claude" ? "claude" : "gemini",
+  geminiKey: lsGet(LS.gemini),
+  claudeKey: lsGet(LS.claude),
+  accessCode: lsGet(LS.code),
+});
+
+export const saveKeySettings = (k: KeySettings) => {
+  lsSet(LS.provider, k.provider);
+  lsSet(LS.gemini, k.geminiKey.trim());
+  lsSet(LS.claude, k.claudeKey.trim());
+  lsSet(LS.code, k.accessCode.trim());
+};
+
+/** Which credential this browser will use: its own key first, else the owner code. */
+export const activeCredential = (k: KeySettings = loadKeySettings()) => {
+  const key = (k.provider === "claude" ? k.claudeKey : k.geminiKey).trim();
+  if (key) return { kind: "key" as const, provider: k.provider };
+  if (k.accessCode.trim()) return { kind: "owner" as const };
+  return { kind: "none" as const };
+};
+
+const authHeaders = (k: KeySettings = loadKeySettings()): Record<string, string> => {
+  const key = (k.provider === "claude" ? k.claudeKey : k.geminiKey).trim();
+  if (key) return { "x-user-provider": k.provider, "x-user-api-key": key };
+  if (k.accessCode.trim()) return { "x-access-code": k.accessCode.trim() };
+  return {};
+};
+
+/** Thrown when the server needs a (valid) key — the app opens Settings. */
+export class NeedKeyError extends Error {
+  needKey = true;
+}
+
+const postJSON = async (url: string, body: unknown, settings?: KeySettings) => {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders(settings) },
     body: JSON.stringify(body),
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 || data.code === "NEED_KEY") {
+    throw new NeedKeyError(data.error || "Add your own API key in Settings.");
+  }
   if (!res.ok) throw new Error(data.error || "The clinical engine returned an error.");
   return data;
 };
+
+/** Check the key (or access code) in these settings without starting a case. */
+export const testKey = async (
+  settings: KeySettings
+): Promise<{ provider: KeyProvider; model: string; source: "player" | "owner" }> =>
+  postJSON("/api/key/test", {}, settings);
 
 export interface CaseInitResponse {
   intro: string;
@@ -66,9 +139,10 @@ export const progressSimulation = async (
   });
 
 export interface EngineInfo {
-  provider: 'claude' | 'gemini';
-  model: string;
-  configured: boolean;
+  mode: "bring-your-own-key";
+  /** True when the site owner has set an access code for the server's own key. */
+  ownerAccess: boolean;
+  models: { gemini: string; claude: string };
 }
 
 export const getEngineInfo = async (): Promise<EngineInfo | null> => {

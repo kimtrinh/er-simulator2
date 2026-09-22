@@ -1,10 +1,19 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { timingSafeEqual } from "node:crypto";
 
 /**
  * One entry point for every model call the simulator makes, so the rest of the
  * server doesn't care which provider is behind it.
  *
- * Provider selection (server environment):
+ * WHOSE KEY: bring-your-own-key. Every request must carry either
+ *   - the player's own key (headers x-user-provider + x-user-api-key), used for
+ *     that request only and never stored or logged; or
+ *   - the site owner's access code (header x-access-code) matching OWNER_ACCESS_CODE,
+ *     which unlocks the keys in the server environment.
+ * With neither, the request is refused — visitors can never spend the owner's keys.
+ *
+ * Server-key provider selection (owner only):
  *   AI_PROVIDER=gemini | claude   — explicit choice
  *   otherwise: Claude if ANTHROPIC_API_KEY is set, else Gemini if GEMINI_API_KEY is set.
  *
@@ -13,6 +22,55 @@ import Anthropic from "@anthropic-ai/sdk";
  */
 
 export type Provider = "claude" | "gemini";
+
+export interface Creds {
+  provider: Provider;
+  apiKey: string;
+  /** "player" = the visitor's own key; "owner" = the server's key via access code. */
+  source: "player" | "owner";
+}
+
+/** Thrown when a request has no usable key; the route answers 401 so the client opens Settings. */
+export class NeedKeyError extends Error {
+  code = "NEED_KEY";
+}
+
+const credStore = new AsyncLocalStorage<Creds>();
+
+/** Run fn with these credentials in scope for every generateJSON call it makes. */
+export const runWithCreds = <T>(creds: Creds, fn: () => Promise<T>): Promise<T> =>
+  credStore.run(creds, fn);
+
+const sameSecret = (a: string, b: string) => {
+  const x = Buffer.from(a), y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+};
+
+/** Work out whose key a request may use, from its headers. */
+export const credsFromHeaders = (h: Record<string, string | string[] | undefined>): Creds => {
+  const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v || "").trim();
+  const userKey = one(h["x-user-api-key"]);
+  if (userKey) {
+    const p = one(h["x-user-provider"]).toLowerCase();
+    return { provider: p === "claude" ? "claude" : "gemini", apiKey: userKey, source: "player" };
+  }
+  const code = one(h["x-access-code"]);
+  const ownerCode = process.env.OWNER_ACCESS_CODE || "";
+  if (code && ownerCode && sameSecret(code, ownerCode)) {
+    const provider = activeProvider();
+    const apiKey = provider === "gemini" ? geminiKey() : claudeKey();
+    if (!apiKey) throw new NeedKeyError(`Access code accepted, but the server has no ${provider} key set.`);
+    return { provider, apiKey, source: "owner" };
+  }
+  if (code) throw new NeedKeyError("That access code isn't right. Add your own API key in Settings instead.");
+  throw new NeedKeyError("Add your own API key in Settings (a free Gemini key works).");
+};
+
+const currentCreds = (): Creds => {
+  const c = credStore.getStore();
+  if (!c) throw new NeedKeyError("Add your own API key in Settings (a free Gemini key works).");
+  return c;
+};
 
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-opus-4-8";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-latest";
@@ -29,13 +87,31 @@ export const activeProvider = (): Provider => {
   return "claude";
 };
 
-export const engineInfo = () => {
-  const provider = activeProvider();
-  return {
-    provider,
-    model: provider === "gemini" ? GEMINI_MODEL : CLAUDE_MODEL,
-    configured: provider === "gemini" ? !!geminiKey() : !!claudeKey(),
-  };
+/** Public info only — never reveals whether the owner has keys set, just that an access code exists. */
+export const engineInfo = () => ({
+  mode: "bring-your-own-key",
+  ownerAccess: !!process.env.OWNER_ACCESS_CODE,
+  models: { gemini: GEMINI_MODEL, claude: CLAUDE_MODEL },
+});
+
+export const modelFor = (p: Provider) => (p === "gemini" ? GEMINI_MODEL : CLAUDE_MODEL);
+
+/** Check a key works by listing models — cheap, and doesn't spend generation quota. */
+export const testCreds = async (c: Creds): Promise<{ provider: Provider; model: string }> => {
+  let res: Response;
+  if (c.provider === "gemini") {
+    res = await fetch(`${GEMINI_API}/models?pageSize=1000`, { headers: { "x-goog-api-key": c.apiKey } });
+    if (res.status === 400 || res.status === 401) throw new NeedKeyError("Google rejected that Gemini key. Check it was copied in full.");
+    if (res.status === 403) throw new NeedKeyError("That Gemini key doesn't have access to the Gemini API (403).");
+  } else {
+    res = await fetch("https://api.anthropic.com/v1/models?limit=1", {
+      headers: { "x-api-key": c.apiKey, "anthropic-version": "2023-06-01" },
+    });
+    if (res.status === 401) throw new NeedKeyError("Anthropic rejected that API key. Check it was copied in full.");
+    if (res.status === 403) throw new NeedKeyError("That Anthropic key doesn't have permission (403).");
+  }
+  if (!res.ok) throw new Error(`${c.provider === "gemini" ? "Gemini" : "Claude"} API returned HTTP ${res.status}.`);
+  return { provider: c.provider, model: modelFor(c.provider) };
 };
 
 export type Part =
@@ -66,9 +142,7 @@ function extractJSON(text: string): any {
   }
 }
 
-async function claudeJSON(req: JSONRequest): Promise<any> {
-  const apiKey = claudeKey();
-  if (!apiKey) throw new Error("No Anthropic API key configured. Set ANTHROPIC_API_KEY (or GEMINI_API_KEY to use Gemini).");
+async function claudeJSON(req: JSONRequest, apiKey: string): Promise<any> {
   const client = new Anthropic({ apiKey });
 
   const content: any[] = req.parts.map((p) => {
@@ -88,7 +162,12 @@ async function claudeJSON(req: JSONRequest): Promise<any> {
       effort: req.effort || "medium",
       format: { type: "json_schema", schema: req.schema },
     },
-  } as any);
+  } as any).catch((e: unknown) => {
+    if (e instanceof Anthropic.AuthenticationError) {
+      throw new NeedKeyError("Anthropic rejected that API key. Check it in Settings.");
+    }
+    throw e;
+  });
 
   if ((message as any).stop_reason === "refusal") {
     throw new Error("The clinical engine declined this request. Try rephrasing.");
@@ -97,10 +176,7 @@ async function claudeJSON(req: JSONRequest): Promise<any> {
   return extractJSON(textBlock?.text || "");
 }
 
-async function geminiJSON(req: JSONRequest): Promise<any> {
-  const apiKey = geminiKey();
-  if (!apiKey) throw new Error("No Gemini API key configured. Set GEMINI_API_KEY (free at aistudio.google.com/apikey).");
-
+async function geminiJSON(req: JSONRequest, apiKey: string): Promise<any> {
   const parts = req.parts.map((p) =>
     p.type === "text" ? { text: p.text } : { inline_data: { mime_type: p.mimeType, data: p.data } }
   );
@@ -134,6 +210,9 @@ ${JSON.stringify(req.schema)}`;
     if (res.status === 429) {
       throw new Error("Gemini free-tier limit reached — wait a minute and try again.");
     }
+    if (res.status === 400 && /API key not valid/i.test(msg)) {
+      throw new NeedKeyError("Google rejected that Gemini key. Check it in Settings.");
+    }
     throw new Error(`Gemini API returned ${res.status}. ${msg}`);
   }
 
@@ -152,5 +231,7 @@ ${JSON.stringify(req.schema)}`;
   return extractJSON(text);
 }
 
-export const generateJSON = (req: JSONRequest): Promise<any> =>
-  activeProvider() === "gemini" ? geminiJSON(req) : claudeJSON(req);
+export const generateJSON = (req: JSONRequest): Promise<any> => {
+  const c = currentCreds();
+  return c.provider === "gemini" ? geminiJSON(req, c.apiKey) : claudeJSON(req, c.apiKey);
+};
