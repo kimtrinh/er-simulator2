@@ -2,7 +2,7 @@
 
 A high-fidelity emergency-room training simulator that runs as a self-contained website. Generate evidence-based clinical cases from any medical topic (or upload real records), then play the treating physician: take a history, order labs and imaging, run a physical exam, give treatments, and watch the patient's vitals respond in real time on a live monitor. When the case ends you get a scored debrief with critical-event analysis and learning points.
 
-The clinical engine runs on **Gemini** (free tier) or **Claude** (Anthropic API) — set whichever key you have. The key stays on the server and is never exposed to the browser.
+The clinical engine runs on **Gemini** (free tier) or **Claude** (Anthropic API), and the site is **bring-your-own-key**: each player pastes their own key into the site's **API Key** settings. It's kept only in their browser and sent only with their own requests — the server never stores it, and no visitor can spend anyone else's key (including the site owner's).
 
 ## Features
 
@@ -21,22 +21,18 @@ The clinical engine runs on **Gemini** (free tier) or **Claude** (Anthropic API)
 
 ## Run locally
 
-**Prerequisites:** Node.js 18+ and one API key — either a free [Gemini API key](https://aistudio.google.com/apikey) or an [Anthropic API key](https://console.anthropic.com/).
+**Prerequisites:** Node.js 18+. To play you'll need an API key — a free [Gemini API key](https://aistudio.google.com/apikey) or an [Anthropic API key](https://console.anthropic.com/) — which you paste into the site's **API Key** settings.
 
 1. Install dependencies:
    ```bash
    npm install
    ```
-2. Create your env file and add your key:
-   ```bash
-   cp .env.example .env.local
-   # edit .env.local and set GEMINI_API_KEY=AIza... (free) or ANTHROPIC_API_KEY=sk-ant-...
-   ```
-3. Start the app:
+2. Start the app:
    ```bash
    npm run dev
    ```
-   Open http://localhost:3000
+   Open http://localhost:3000, click **Add Key**, paste your key, and press **Test**.
+3. Optional (site owner only): to play without pasting a key, copy `.env.example` to `.env.local`, set `OWNER_ACCESS_CODE` plus `GEMINI_API_KEY` and/or `ANTHROPIC_API_KEY`, and enter the access code in the site's API Key settings. Without the access code, the server's keys are never used.
 
 ## Build & deploy
 
@@ -45,7 +41,7 @@ npm run build      # bundles the client (dist/) and the server (dist/server.cjs)
 NODE_ENV=production node dist/server.cjs
 ```
 
-The server serves the built client and exposes the simulation API. Deploy it to any Node host (Render, Railway, Fly.io, a VM, etc.) and set `GEMINI_API_KEY` or `ANTHROPIC_API_KEY` (and optionally `AI_PROVIDER`, `PORT`) in the host's environment. The header shows which engine is running, and turns red if no key is set. Because the key lives only on the server, it is never shipped to the browser.
+The server serves the built client and exposes the simulation API. Deploy it to any Node host (Render, Railway, Fly.io, a VM, etc.) No keys are required on the host — players bring their own. Optionally set `OWNER_ACCESS_CODE` with `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` (and `AI_PROVIDER`) so that only you, by entering the code, can use your own key. The header shows which key the browser is using, and turns red when it has none.
 
 ## How it works
 
@@ -54,11 +50,11 @@ Browser (React + Vite)
   └─ POST /api/sim/topic | /pdf | /progress | /tutor | /grade
        └─ Express server (server.ts)
             └─ server/simEngine.ts — prompts + JSON schemas
-                 └─ server/llm.ts — Gemini or Claude, picked from the server environment
+                 └─ server/llm.ts — Gemini or Claude, on the caller's own key (or the owner's, with the access code)
 ```
 
 - `server/simEngine.ts` — builds the prompts and JSON schemas for case setup, each bedside turn (including interpreting free-text orders), the tutor, and the full-case grading.
-- `server/llm.ts` — the one place that calls a model: Claude with structured outputs, or Gemini in JSON mode.
+- `server/llm.ts` — the one place that calls a model: Claude with structured outputs, or Gemini in JSON mode. It decides whose key each request may use: the player's own key from the request headers, or the server's key only when the request carries `OWNER_ACCESS_CODE`; anything else is refused with 401.
 - `services/geminiService.ts` — the browser's thin client for those endpoints.
 - `data/orderCatalog.ts` — the bedside order catalogue: every clickable order, which ones count as critical actions, and the matching used to file free-text orders into the chart.
 - `data/trainingLevels.ts` — the three training levels and the prompt fragments that pitch the case, the bedside, and the marking at each.
@@ -67,5 +63,5 @@ Browser (React + Vite)
 
 ## Notes
 
-- No secrets are committed. Provide `GEMINI_API_KEY` or `ANTHROPIC_API_KEY` at runtime via `.env.local` (git-ignored) or your host's environment.
+- No secrets are committed. Player keys are never stored server-side or logged; the optional owner keys and access code are provided at runtime via `.env.local` (git-ignored) or your host's environment.
 - Educational simulation only — not for real clinical decision-making.
