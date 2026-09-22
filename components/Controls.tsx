@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic, MicOff, Send, Command, CornerDownLeft, ClipboardList, AlertTriangle, ChevronDown } from 'lucide-react';
+import { Mic, MicOff, Send, Command, CornerDownLeft, ClipboardList, AlertTriangle, ChevronDown, Lightbulb } from 'lucide-react';
 import { QUICK_ACTIONS, CRITICAL_ACTIONS, resolveOrderText } from '../data/orderCatalog';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -12,6 +12,10 @@ function cn(...inputs: ClassValue[]) {
 
 interface Props {
   onAction: (action: string) => void;
+  /** Ask the private tutor: '' for the next hint, or a typed question. */
+  onAskTutor?: (question: string) => void;
+  /** Hints used so far this case — the button shows which hint level is next. */
+  hintsUsed?: number;
   disabled: boolean;
   /** Case-specific critical actions suggested by the clinical engine. */
   criticalActions?: string[];
@@ -38,6 +42,8 @@ const MEDICAL_VOCABULARY = [
 
 const Controls: React.FC<Props> = ({
   onAction,
+  onAskTutor,
+  hintsUsed = 0,
   disabled,
   criticalActions = [],
   suggestionsExpanded = true,
@@ -107,6 +113,15 @@ const Controls: React.FC<Props> = ({
       recognitionRef.current = recognition;
     }
   }, []);
+
+  /** With text in the box it's a question for the tutor; empty, it's "give me a hint". */
+  const handleTutor = () => {
+    if (disabled || !onAskTutor) return;
+    const q = inputText.trim();
+    setInputText('');
+    onAskTutor(q);
+  };
+  const tutorLabel = inputText.trim() ? 'Ask' : `Hint${hintsUsed ? ' ' + Math.min(hintsUsed + 1, 3) : ''}`;
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -217,10 +232,23 @@ const Controls: React.FC<Props> = ({
               onKeyDown={handleKeyDown}
               disabled={disabled}
               placeholder={disabled ? 'Processing...' : isListening ? "Listening..." : "Enter command..."}
-              className="w-full bg-transparent text-slate-100 pl-10 md:pl-14 pr-24 md:pr-32 py-3 md:py-4 focus:outline-none font-sans text-sm md:text-base placeholder:text-slate-700 input-scrollbar overflow-y-auto min-h-[48px] md:min-h-[56px]"
+              className="w-full bg-transparent text-slate-100 pl-10 md:pl-14 pr-40 md:pr-52 py-3 md:py-4 focus:outline-none font-sans text-sm md:text-base placeholder:text-slate-700 input-scrollbar overflow-y-auto min-h-[48px] md:min-h-[56px]"
             />
 
             <div className="absolute right-2 md:right-4 bottom-2 md:bottom-4 flex items-center gap-2 md:gap-3">
+                {onAskTutor && (
+                  <button
+                    type="button"
+                    onClick={handleTutor}
+                    disabled={disabled}
+                    title="Tutor — press with an empty box for a hint (each press gets more specific), or type a question first. Private: the team can't hear it."
+                    className="flex items-center gap-1.5 px-2.5 md:px-3 py-2 md:py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-400 hover:bg-amber-500/20 text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-30"
+                  >
+                    <Lightbulb className="w-4 h-4" />
+                    <span>{tutorLabel}</span>
+                  </button>
+                )}
+
                 {/* Dictation Button */}
                 <button
                     type="button"

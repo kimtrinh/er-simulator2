@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { User, Bot, AlertCircle, Clock, Maximize2, X, Volume2, Loader2, BrainCircuit, ChevronDown, ChevronUp } from 'lucide-react';
+import { User, Bot, AlertCircle, Clock, Maximize2, X, Volume2, Loader2, BrainCircuit, ChevronDown, ChevronUp, Lightbulb } from 'lucide-react';
 import { Message } from '../types';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -91,11 +91,13 @@ const ChatInterface: React.FC<Props> = ({ messages = [], isLoading }) => {
             {/* Avatar */}
             <div className={cn(
               "w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 border shadow-lg",
-              msg.role === 'user' 
+              msg.type === 'tutor' || msg.type === 'tutorQuestion'
+                ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                : msg.role === 'user' 
                 ? "bg-blue-600/10 border-blue-500/20 text-blue-500" 
                 : "bg-emerald-600/10 border-emerald-500/20 text-emerald-500"
             )}>
-              {msg.role === 'user' ? <User className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
+              {msg.type === 'tutor' ? <Lightbulb className="w-5 h-5" /> : msg.role === 'user' ? <User className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
             </div>
 
             {/* Message Bubble */}
@@ -105,7 +107,11 @@ const ChatInterface: React.FC<Props> = ({ messages = [], isLoading }) => {
             )}>
               <div className={cn(
                 "rounded-3xl p-5 shadow-2xl relative overflow-hidden group transition-all",
-                msg.role === 'user'
+                msg.type === 'tutorQuestion'
+                  ? "bg-amber-500/[0.06] text-amber-100 border border-amber-500/25 rounded-tr-none"
+                  : msg.type === 'tutor'
+                  ? "bg-amber-500/[0.05] text-amber-50 border border-amber-500/25 rounded-tl-none"
+                  : msg.role === 'user'
                   ? "bg-blue-600/10 text-blue-100 border border-blue-500/20 rounded-tr-none"
                   : msg.type === 'alert'
                   ? "bg-red-600/10 text-red-200 border border-red-500/20 rounded-tl-none"
@@ -118,9 +124,28 @@ const ChatInterface: React.FC<Props> = ({ messages = [], isLoading }) => {
                   </div>
                 )}
                 
+                {(msg.type === 'tutor' || msg.type === 'tutorQuestion') && (
+                  <div className="mb-2 text-[9px] font-black uppercase tracking-[0.2em] text-amber-500/80">
+                    {msg.type === 'tutorQuestion'
+                      ? 'Asked the tutor'
+                      : `Tutor${msg.hintLevel ? ` · hint ${msg.hintLevel} of 3` : ''} — private, the team can't hear this`}
+                  </div>
+                )}
+
                 <p className="whitespace-pre-wrap leading-relaxed text-sm md:text-base selection:bg-emerald-500/30">
                   {msg.content}
                 </p>
+
+                {msg.type === 'tutor' && msg.why && (
+                  <p className="mt-3 text-xs text-amber-200/70 leading-relaxed">
+                    <b className="text-amber-400/80">Why:</b> {msg.why}
+                  </p>
+                )}
+                {msg.type === 'tutor' && msg.watchFor && (
+                  <p className="mt-1.5 text-xs text-red-300/80 leading-relaxed">
+                    <b className="text-red-400/80">Watch for:</b> {msg.watchFor}
+                  </p>
+                )}
 
                 {msg.clinicalRationale && (
                   <div className="mt-4 pt-4 border-t border-slate-800/50">
@@ -149,7 +174,7 @@ const ChatInterface: React.FC<Props> = ({ messages = [], isLoading }) => {
                   </div>
                 )}
 
-                {msg.role === 'assistant' && (
+                {msg.role === 'assistant' && msg.type !== 'tutor' && (
                   <div className="mt-4 flex justify-end">
                     <button
                       onClick={() => handlePlayVoice(msg.content, idx)}

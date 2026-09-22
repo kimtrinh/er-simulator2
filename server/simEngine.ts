@@ -1,22 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { getLevel, TrainingLevel } from "../data/trainingLevels";
+import { generateJSON, Part } from "./llm";
 
 /**
- * Clinical simulation engine powered by Claude (Anthropic API).
- * The API key stays server-side; the browser only talks to this server.
+ * Clinical simulation engine. Runs on Claude or Gemini (see server/llm.ts);
+ * API keys stay server-side and the browser only talks to this server.
  */
-
-const MODEL = "claude-opus-4-8";
-
-const getClient = () => {
-  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.API_KEY || "";
-  if (!apiKey) {
-    console.warn(
-      "WARNING: No Anthropic API key found. Set ANTHROPIC_API_KEY in your environment."
-    );
-  }
-  return new Anthropic({ apiKey });
-};
 
 const DEFAULT_VITALS = {
   hr: 80,
@@ -32,17 +20,6 @@ function ensureArray(val: any): any[] {
   if (!val) return [];
   if (Array.isArray(val)) return val;
   return [val];
-}
-
-/** Pull the JSON object out of a Claude response constrained by output_config.format. */
-function parseJSON(message: Anthropic.Message): any {
-  const textBlock = message.content.find((b) => b.type === "text") as
-    | Anthropic.TextBlock
-    | undefined;
-  if (!textBlock || !textBlock.text) {
-    throw new Error("No response from the clinical engine.");
-  }
-  return JSON.parse(textBlock.text);
 }
 
 const VITALS_SCHEMA = {
@@ -119,24 +96,17 @@ export const startCaseFromTopicCmd = async (
   topic: string,
   level: TrainingLevel = "resident"
 ) => {
-  const client = getClient();
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4000,
+  const parsed = await generateJSON({
     system: caseSystem(level),
-    messages: [
+    parts: [
       {
-        role: "user",
-        content: `Create a complex, realistic, challenging ER simulation case based on the topic: "${topic}". Leave visualCatalog as an empty array (no documents were uploaded).`,
+        type: "text",
+        text: `Create a complex, realistic, challenging ER simulation case based on the topic: "${topic}". Leave visualCatalog as an empty array (no documents were uploaded).`,
       },
     ],
-    output_config: {
-      effort: "medium",
-      format: { type: "json_schema", schema: CASE_INIT_SCHEMA },
-    },
-  } as any);
-
-  const parsed = parseJSON(message);
+    schema: CASE_INIT_SCHEMA,
+    effort: "medium",
+  });
   return {
     ...parsed,
     vitals: { ...DEFAULT_VITALS, ...parsed.vitals },
@@ -151,53 +121,28 @@ export const analyzePDFAndStartCaseCmd = async (
   extractedImages: string[],
   level: TrainingLevel = "resident"
 ) => {
-  const client = getClient();
+  const fileParts: Part[] = (files || [])
+    .filter(
+      (f) => f.mimeType === "application/pdf" || (f.mimeType && f.mimeType.startsWith("image/"))
+    )
+    .map((f) => ({ type: "file", mimeType: f.mimeType, data: f.data }));
 
-  const fileBlocks: any[] = (files || [])
-    .map((f) => {
-      if (f.mimeType === "application/pdf") {
-        return {
-          type: "document",
-          source: { type: "base64", media_type: "application/pdf", data: f.data },
-        };
-      }
-      if (f.mimeType && f.mimeType.startsWith("image/")) {
-        return {
-          type: "image",
-          source: { type: "base64", media_type: f.mimeType, data: f.data },
-        };
-      }
-      return null;
-    })
-    .filter(Boolean);
-
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4000,
+  const parsed = await generateJSON({
     system: caseSystem(level),
-    messages: [
+    parts: [
+      ...fileParts,
       {
-        role: "user",
-        content: [
-          ...fileBlocks,
-          {
             type: "text",
             text: `Analyze the attached clinical records and build a complex ER simulation case from them.
 There are ${extractedImages.length} visual assets available, indexed 0..${Math.max(
               0,
               extractedImages.length - 1
             )}. For any asset relevant to the case (EKG, chest X-ray, CT, etc.) add an entry to "visualCatalog" where "id" is the string index (e.g. "0") and "label" is a short name (e.g. "12-Lead EKG"). If no assets are relevant, return an empty visualCatalog array.`,
-          },
-        ],
       },
     ],
-    output_config: {
-      effort: "medium",
-      format: { type: "json_schema", schema: CASE_INIT_SCHEMA },
-    },
-  } as any);
-
-  const parsed = parseJSON(message);
+    schema: CASE_INIT_SCHEMA,
+    effort: "medium",
+  });
   const finalVisuals = (parsed.visualCatalog || [])
     .map((item: any) => ({ ...item, data: extractedImages[parseInt(item.id)] || "" }))
     .filter((v: any) => v.data !== "");
@@ -210,6 +155,11 @@ There are ${extractedImages.length} visual assets available, indexed 0..${Math.m
     criticalActions: ensureArray(parsed.criticalActions),
   };
 };
+
+const ORDER_CATEGORIES = [
+  "critical", "medication", "lab", "imaging", "procedure",
+  "exam", "history", "consult", "disposition", "other",
+];
 
 const SIM_PROGRESS_SCHEMA = {
   type: "object",
@@ -261,6 +211,19 @@ const SIM_PROGRESS_SCHEMA = {
     isCaseOver: { type: "boolean" },
     clinicalRationale: { type: "string" },
     imageIdToDisplay: { type: "string" },
+    interpretedOrders: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          category: { type: "string", enum: ORDER_CATEGORIES },
+          critical: { type: "boolean" },
+        },
+        required: ["label", "category", "critical"],
+        additionalProperties: false,
+      },
+    },
     debriefData: {
       type: "object",
       properties: {
@@ -325,7 +288,6 @@ export const progressSimulationCmd = async (
   workingDiagnoses: string[] = [],
   level: TrainingLevel = "resident"
 ) => {
-  const client = getClient();
   const spec = getLevel(level);
 
   const system = `You are the Bedside Simulation Engine for a high-fidelity ER trainer. The player is the treating physician; you control the patient, nurse, environment, and all clinical data.
@@ -352,7 +314,14 @@ STRICT RULES:
    narrow or anchored one scores poorly. Put that reasoning in "diagnosisReview", naming which of
    their diagnoses were right, which were reasonable to carry, and what was missed.
 10. If the player requests a visual that exists, set "imageIdToDisplay" to its id.
-11. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
+11. FREE-TEXT ORDERS: the player's action is often typed or voice-dictated — informal, abbreviated,
+   or slightly misheard. Work out the real clinical orders a physician would mean, whether or not
+   they appear on any menu, and carry them out. List each in "interpretedOrders" under a concise
+   standard order name (e.g. "Ceftriaxone 2 g IV", "CT head without contrast"); "critical" is true
+   for time-critical resuscitative interventions. If an order is clinically meaningless or
+   dangerously incomplete (e.g. a high-risk drug with no dose), leave it out and have the nurse ask
+   for clarification in the narrative instead of guessing.
+12. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
 
   const visualInventory = (visuals || [])
     .map((v) => `id ${v.id}: ${v.label}`)
@@ -373,18 +342,12 @@ PLAYER'S DOCUMENTED DIFFERENTIAL: ${
 
 PLAYER ACTION: ${userAction}`;
 
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4000,
+  const parsed = await generateJSON({
     system,
-    messages: [{ role: "user", content: prompt }],
-    output_config: {
-      effort: "low",
-      format: { type: "json_schema", schema: SIM_PROGRESS_SCHEMA },
-    },
-  } as any);
-
-  const parsed = parseJSON(message);
+    parts: [{ type: "text", text: prompt }],
+    schema: SIM_PROGRESS_SCHEMA,
+    effort: "low",
+  });
   return {
     ...parsed,
     updatedVitals: parsed.updatedVitals
@@ -393,6 +356,165 @@ PLAYER ACTION: ${userAction}`;
     physicalExam: ensureArray(parsed.physicalExam),
     diagnosticReports: ensureArray(parsed.diagnosticReports),
     labResults: ensureArray(parsed.labResults),
+    // Left undefined when the model omits it, so the client can fall back to local matching.
+    interpretedOrders: Array.isArray(parsed.interpretedOrders)
+      ? parsed.interpretedOrders.filter((o: any) => o && o.label)
+      : undefined,
     isCaseOver: !!parsed.isCaseOver,
+  };
+};
+
+/* ------------------------------------------------------------------ */
+/* Tutor + full-case grading                                          */
+/* ------------------------------------------------------------------ */
+
+/** Everything the tutor and the grader need to know about the case so far. */
+export interface CaseRecord {
+  context: string;
+  diagnosis: string;
+  criticalActions: string[];
+  learningPoints: string[];
+  /** e.g. "HR 120, BP 90/60, RR 24, SpO2 92%, T 38.5, Sinus Tachycardia (worsening)" */
+  vitals: string;
+  /** Oldest first, e.g. "14:02  Ceftriaxone 2 g IV [medication, critical]". */
+  orderLog: string[];
+  differential: string[];
+  /** Transcript lines, "DOCTOR: ..." / "SIM: ...". Tutor exchanges excluded. */
+  transcript: string[];
+  hintsUsed: number;
+}
+
+const recordText = (r: CaseRecord, transcriptLines?: number) => `TRUE DIAGNOSIS: ${r.diagnosis}
+HIDDEN CONTEXT: ${r.context}
+EXPECTED CRITICAL ACTIONS: ${(r.criticalActions || []).join("; ") || "not specified"}
+LEARNING POINTS: ${(r.learningPoints || []).join("; ")}
+CURRENT VITALS: ${r.vitals}
+ORDER LOG (oldest first):
+${(r.orderLog || []).join("\n") || "no orders placed"}
+DOCUMENTED DIFFERENTIAL: ${(r.differential || []).join("; ") || "none documented"}
+HINTS USED FROM THE TUTOR: ${r.hintsUsed || 0}
+TRANSCRIPT:
+${(transcriptLines ? (r.transcript || []).slice(-transcriptLines) : r.transcript || []).join("\n")}`;
+
+const TUTOR_SCHEMA = {
+  type: "object",
+  properties: {
+    hint: { type: "string" },
+    why: { type: "string" },
+    watchFor: { type: "string" },
+  },
+  required: ["hint", "why", "watchFor"],
+  additionalProperties: false,
+};
+
+/**
+ * A private attending the player can ask when stuck. Hint level 1 is a
+ * Socratic nudge, 2 names the area to focus on, 3 gives the explicit next step.
+ */
+export const tutorCmd = async (
+  record: CaseRecord,
+  hintLevel: number,
+  question: string = "",
+  level: TrainingLevel = "resident"
+) => {
+  const spec = getLevel(level);
+  const lvl = Math.max(1, Math.min(3, Math.round(hintLevel || 1)));
+  const system = `You are an emergency-medicine attending quietly coaching a ${spec.label.toLowerCase()} through a live simulated resuscitation. You can see the hidden case truth; the player cannot.
+- "hint": 1-3 sentences on what to do or think about next, pitched by HINT LEVEL: 1 = a Socratic nudge toward what they are overlooking (a question, no answer); 2 = name the domain or finding to focus on and why; 3 = the specific next action(s), with doses where relevant.
+- "why": one or two sentences of teaching — the physiology or guideline behind it.
+- "watchFor": one short line on a danger or trap coming up in this case, or "" if none.
+- If the player asks a direct question, answer it as a teacher would at their level.
+- Never state the hidden diagnosis outright, even at level 3; you may name the finding or test that would reveal it. If they are already on the right track, say so briefly and tell them what comes next.
+Respond ONLY with the JSON object defined by the schema.`;
+
+  const q = (question || "").trim();
+  return generateJSON({
+    system,
+    parts: [
+      {
+        type: "text",
+        text: `${recordText(record, 12)}
+HINT LEVEL: ${lvl}
+${q ? `PLAYER QUESTION: ${q}` : 'The player pressed "Hint" — they are not sure what to do next.'}`,
+      },
+    ],
+    schema: TUTOR_SCHEMA,
+    effort: "low",
+    maxTokens: 1500,
+  });
+};
+
+const GRADE_SCHEMA = {
+  type: "object",
+  properties: {
+    outcome: { type: "string" },
+    score: { type: "number" },
+    summary: { type: "string" },
+    performanceBreakdown: (SIM_PROGRESS_SCHEMA.properties.debriefData as any).properties.performanceBreakdown,
+    criticalEvents: (SIM_PROGRESS_SCHEMA.properties.debriefData as any).properties.criticalEvents,
+    missedOpportunities: { type: "array", items: { type: "string" } },
+    diagnosisReview: { type: "string" },
+    actionReview: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          action: { type: "string" },
+          status: { type: "string", enum: ["done", "late", "missed", "unnecessary", "harmful"] },
+          feedback: { type: "string" },
+        },
+        required: ["action", "status", "feedback"],
+        additionalProperties: false,
+      },
+    },
+    nextTime: { type: "array", items: { type: "string" } },
+  },
+  required: [
+    "outcome", "score", "summary", "performanceBreakdown", "criticalEvents",
+    "missedOpportunities", "diagnosisReview", "actionReview", "nextTime",
+  ],
+  additionalProperties: false,
+};
+
+/**
+ * A dedicated review of the whole case once it ends — every order with its
+ * timing, the differential, and the hints used — instead of grading inside a
+ * single bedside turn.
+ */
+export const gradeCmd = async (
+  record: CaseRecord,
+  preliminary: unknown,
+  level: TrainingLevel = "resident"
+) => {
+  const spec = getLevel(level);
+  const system = `You are an emergency-medicine attending grading a completed simulated case for a ${spec.label.toLowerCase()}. ${spec.debriefPrompt}
+Rules:
+1. "actionReview" covers every expected critical action (done, late, or missed — judge timing from the order log) plus any order that was unnecessary or harmful. "feedback" says specifically what was right or wrong and what the correct move was, with doses where relevant.
+2. "diagnosisReview" judges the differential: breadth, ranking, whether they anchored or closed prematurely, and what should have prompted the right diagnosis.
+3. "score" and each "performanceBreakdown" value are 0-100, marked to the training level; deduct modestly for tutor hints used.
+4. "criticalEvents" are the key moments, with what the player did ("userAction") and what was optimal ("optimalAction").
+5. "nextTime" is 2-4 concrete habits to change.
+6. Be specific to what this player actually did — quote their orders.
+Respond ONLY with the JSON object defined by the schema.`;
+
+  const g = await generateJSON({
+    system,
+    parts: [
+      {
+        type: "text",
+        text: `${recordText(record)}
+ENGINE'S PRELIMINARY DEBRIEF: ${JSON.stringify(preliminary || {})}`,
+      },
+    ],
+    schema: GRADE_SCHEMA,
+    effort: "medium",
+    maxTokens: 6000,
+  });
+  return {
+    ...g,
+    criticalEvents: ensureArray(g.criticalEvents),
+    missedOpportunities: ensureArray(g.missedOpportunities),
+    actionReview: ensureArray(g.actionReview),
+    nextTime: ensureArray(g.nextTime),
   };
 };

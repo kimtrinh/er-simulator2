@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // https://vitejs.dev/config/
-// The Anthropic API key lives only on the server (see server/claudeServer.ts)
+// API keys (Gemini / Anthropic) live only on the server (see server/llm.ts)
 // and is never injected into the client bundle.
 export default defineConfig({
   plugins: [react()],

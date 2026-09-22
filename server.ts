@@ -5,7 +5,10 @@ import {
   startCaseFromTopicCmd,
   analyzePDFAndStartCaseCmd,
   progressSimulationCmd,
-} from "./server/claudeServer.ts";
+  tutorCmd,
+  gradeCmd,
+} from "./server/simEngine.ts";
+import { engineInfo } from "./server/llm.ts";
 
 async function startServer() {
   const app = express();
@@ -15,7 +18,8 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
 
   app.get("/api/health", (_req: Request, res: Response) => {
-    res.json({ status: "ok", engine: "claude" });
+    // The client shows which engine is running (and warns if no key is set).
+    res.json({ status: "ok", engine: engineInfo() });
   });
 
   // Generate a case from a free-text medical topic.
@@ -65,6 +69,28 @@ async function startServer() {
     }
   });
 
+  // Private coaching when the player is stuck: escalating hints or a direct question.
+  app.post("/api/sim/tutor", async (req: Request, res: Response) => {
+    try {
+      const { record, hintLevel, question, level } = req.body;
+      res.json(await tutorCmd(record, hintLevel, question, level));
+    } catch (e: any) {
+      console.error(e);
+      res.status(500).json({ error: e.message || "The tutor is unavailable." });
+    }
+  });
+
+  // Full-case review once the encounter ends.
+  app.post("/api/sim/grade", async (req: Request, res: Response) => {
+    try {
+      const { record, preliminary, level } = req.body;
+      res.json(await gradeCmd(record, preliminary, level));
+    } catch (e: any) {
+      console.error(e);
+      res.status(500).json({ error: e.message || "Grading failed." });
+    }
+  });
+
   if (process.env.NODE_ENV === "production") {
     console.log("Serving static production assets from dist/...");
     const distPath = path.join(process.cwd(), "dist");
@@ -87,7 +113,13 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`MediSim ER running on http://localhost:${PORT}`);
+    const e = engineInfo();
+    console.log(`MediSim ER running on http://localhost:${PORT} — engine: ${e.provider} (${e.model})`);
+    if (!e.configured) {
+      console.warn(
+        `WARNING: no API key for ${e.provider}. Set GEMINI_API_KEY (free) or ANTHROPIC_API_KEY.`
+      );
+    }
   });
 }
 

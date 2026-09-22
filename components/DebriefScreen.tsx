@@ -13,9 +13,11 @@ import {
   XCircle, 
   Info,
   ChevronRight,
-  Brain
+  Brain,
+  ListChecks,
+  Lightbulb
 } from 'lucide-react';
-import { DebriefData, TrainingLevel } from '../types';
+import { DebriefData, TrainingLevel, ActionReviewItem } from '../types';
 import { getLevel } from '../data/trainingLevels';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -55,6 +57,14 @@ const ProgressBar = ({ label, value, icon: Icon }: { label: string; value: numbe
     );
 };
 
+const REVIEW_STYLE: Record<ActionReviewItem['status'], { label: string; cls: string }> = {
+  done: { label: 'Done', cls: 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400' },
+  late: { label: 'Late', cls: 'bg-yellow-500/10 border-yellow-500/40 text-yellow-400' },
+  missed: { label: 'Missed', cls: 'bg-red-500/10 border-red-500/40 text-red-400' },
+  unnecessary: { label: 'Unnecessary', cls: 'bg-slate-500/10 border-slate-500/40 text-slate-400' },
+  harmful: { label: 'Harmful', cls: 'bg-red-500/15 border-red-500/60 text-red-300' },
+};
+
 const DebriefScreen: React.FC<Props> = ({ data, level, onRestart }) => {
   const levelSpec = level ? getLevel(level) : null;
   const scoreColor = data.score >= 80 ? 'text-emerald-400 border-emerald-500/30 shadow-emerald-500/20' 
@@ -64,6 +74,8 @@ const DebriefScreen: React.FC<Props> = ({ data, level, onRestart }) => {
   const criticalEvents = data.criticalEvents || [];
   const missedOpportunities = data.missedOpportunities || [];
   const cmeLearningPoints = data.cmeLearningPoints || [];
+  const actionReview = Array.isArray(data.actionReview) ? data.actionReview : [];
+  const nextTime = Array.isArray(data.nextTime) ? data.nextTime : [];
   const submittedDiagnoses = data.submittedDiagnoses || [];
   const showDifferential = submittedDiagnoses.length > 0 || !!data.correctDiagnosis;
 
@@ -113,6 +125,13 @@ const DebriefScreen: React.FC<Props> = ({ data, level, onRestart }) => {
                 {levelSpec && (
                   <span className="mt-4 px-4 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-[9px] font-black uppercase tracking-[0.25em] text-slate-400 z-10">
                     Marked at {levelSpec.label} level
+                  </span>
+                )}
+                {(data.graded || !!data.hintsUsed) && (
+                  <span className="mt-2 text-[9px] font-black uppercase tracking-[0.2em] text-amber-400/80 z-10 text-center">
+                    {data.graded ? 'Full case review' : ''}
+                    {data.graded && data.hintsUsed ? ' · ' : ''}
+                    {data.hintsUsed ? `${data.hintsUsed} tutor hint${data.hintsUsed > 1 ? 's' : ''} used` : ''}
                   </span>
                 )}
             </div>
@@ -221,6 +240,45 @@ const DebriefScreen: React.FC<Props> = ({ data, level, onRestart }) => {
                 <p className="text-slate-300 text-sm leading-relaxed">{data.diagnosisReview}</p>
               </div>
             )}
+          </motion.div>
+        )}
+
+        {data.gradeError && (
+          <p className="text-xs text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-2xl p-4">
+            The full case review couldn't run ({data.gradeError}), so this is the bedside engine's quick debrief.
+          </p>
+        )}
+
+        {/* Action-by-action review */}
+        {actionReview.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="bg-slate-900/40 backdrop-blur-xl border border-slate-800/50 p-10 rounded-[2.5rem] space-y-6"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-emerald-500/10 rounded-xl">
+                <ListChecks className="w-5 h-5 text-emerald-400" />
+              </div>
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.3em]">Action-by-Action Review</h3>
+            </div>
+            <div className="space-y-3">
+              {actionReview.map((a, idx) => {
+                const style = REVIEW_STYLE[a.status] || REVIEW_STYLE.unnecessary;
+                return (
+                  <div key={idx} className="flex items-start gap-4 p-5 rounded-3xl bg-slate-950/40 border border-slate-800/40">
+                    <span className={cn('shrink-0 mt-0.5 px-2.5 py-1 rounded-lg border text-[9px] font-black uppercase tracking-widest', style.cls)}>
+                      {style.label}
+                    </span>
+                    <div>
+                      <p className="text-sm font-bold text-slate-200">{a.action}</p>
+                      <p className="text-sm text-slate-400 leading-relaxed mt-1">{a.feedback}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </motion.div>
         )}
 
@@ -358,6 +416,30 @@ const DebriefScreen: React.FC<Props> = ({ data, level, onRestart }) => {
             </ul>
           </motion.div>
         </div>
+
+        {nextTime.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="bg-amber-500/[0.04] backdrop-blur-xl p-10 rounded-[2.5rem] border border-amber-500/20"
+          >
+            <div className="flex items-center gap-3 mb-6">
+              <div className="p-2 bg-amber-500/10 rounded-xl">
+                <Lightbulb className="w-5 h-5 text-amber-400" />
+              </div>
+              <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.3em]">Next Time</h3>
+            </div>
+            <ul className="space-y-4">
+              {nextTime.map((point, idx) => (
+                <li key={idx} className="flex items-start gap-4">
+                  <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-500/60" />
+                  <span className="text-slate-300 text-sm font-medium leading-relaxed">{point}</span>
+                </li>
+              ))}
+            </ul>
+          </motion.div>
+        )}
 
         {/* Restart Action */}
         <motion.div 
