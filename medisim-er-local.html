@@ -28,10 +28,13 @@
       <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
     </div>
     <div>
-      <h1 class="text-base font-black tracking-tight uppercase italic">MediSim <span class="text-emerald-500 not-italic">ER</span></h1>
+      <div class="flex items-center gap-2">
+        <h1 class="text-base font-black tracking-tight uppercase italic">MediSim <span class="text-emerald-500 not-italic">ER</span></h1>
+        <button id="modeBadge" class="px-2 py-0.5 rounded-md border text-[8px] font-black uppercase tracking-[.2em] transition" title="Which engine is running the case — click to change"></button>
+      </div>
       <div class="flex items-center gap-1.5">
         <span id="connDot" class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
-        <span id="connText" class="text-[8px] font-black text-slate-500 uppercase tracking-[.2em]">Local Engine: offline</span>
+        <span id="connText" class="text-[8px] font-black text-slate-500 uppercase tracking-[.2em]">Local Engine: not checked</span>
       </div>
     </div>
   </div>
@@ -54,10 +57,22 @@
 <div id="settingsModal" class="fixed inset-0 z-50 hidden bg-slate-950/90 backdrop-blur-xl items-center justify-center p-4">
   <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-7 space-y-5">
     <div class="flex justify-between items-center">
-      <h2 class="text-xl font-black">Local Model Settings</h2>
+      <h2 class="text-xl font-black">Engine Settings</h2>
       <button id="closeSettings" class="text-slate-500 hover:text-white text-2xl leading-none">&times;</button>
     </div>
     <div class="space-y-1">
+      <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Engine</label>
+      <div class="grid grid-cols-2 gap-2">
+        <button data-provider="local" class="provBtn py-3 rounded-xl border text-xs font-black uppercase tracking-widest transition">Local model</button>
+        <button data-provider="claude" class="provBtn py-3 rounded-xl border text-xs font-black uppercase tracking-widest transition">Claude API key</button>
+      </div>
+    </div>
+    <div id="apiKeyRow" class="space-y-1 hidden">
+      <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Anthropic API key</label>
+      <input id="apiKey" type="password" autocomplete="off" spellcheck="false" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm mono focus:outline-none focus:border-amber-500/50" placeholder="sk-ant-..." />
+      <p class="text-[11px] text-slate-500">Stored only in this browser (localStorage) and sent only to api.anthropic.com. Don't use this mode on a shared computer.</p>
+    </div>
+    <div id="baseURLRow" class="space-y-1">
       <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Server URL (LM Studio / Ollama)</label>
       <input id="baseURL" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500/50" placeholder="http://localhost:1234/v1" />
     </div>
@@ -69,13 +84,19 @@
       </div>
       <p id="detectMsg" class="text-[11px] text-slate-500"></p>
     </div>
-    <div class="space-y-1">
+    <div id="tempRow" class="space-y-1">
       <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Creativity (temperature): <span id="tempVal">0.7</span></label>
       <input id="temp" type="range" min="0" max="1.2" step="0.1" value="0.7" class="w-full accent-emerald-500" />
     </div>
-    <button id="testBtn" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl transition">Test connection</button>
-    <div class="text-[11px] text-slate-500 leading-relaxed bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+    <div>
+      <button id="testBtn" class="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-bold py-3 rounded-xl transition">Test connection</button>
+      <p id="testMsg" class="text-[12px] text-center mt-2 min-h-[1em]"></p>
+    </div>
+    <div id="localHelp" class="text-[11px] text-slate-500 leading-relaxed bg-slate-950/60 border border-slate-800 rounded-xl p-3">
       <b class="text-slate-400">LM Studio setup:</b> Developer tab → <b>Start Server</b> (port 1234) → load your Qwen model → enable <b>CORS</b> in server settings (required so this page can reach it). Then click <b>Detect</b> above.
+    </div>
+    <div id="claudeHelp" class="hidden text-[11px] text-slate-500 leading-relaxed bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+      <b class="text-slate-400">Claude API setup:</b> create a key at <b>console.anthropic.com</b> → paste it above → <b>Test connection</b>. The page calls Claude directly from your browser, so usage is billed to that key.
     </div>
   </div>
 </div>
@@ -85,6 +106,10 @@
 const DEFAULT_VITALS = { hr:80, bpSystolic:120, bpDiastolic:80, rr:16, o2:98, temp:37.0, rhythm:'Sinus Rhythm' };
 const S = {
   stage:'setup',
+  // 'local' = OpenAI-compatible server (LM Studio / Ollama); 'claude' = Anthropic API with the player's own key.
+  provider: localStorage.getItem('ms_provider')==='claude' ? 'claude' : 'local',
+  apiKey: localStorage.getItem('ms_apiKey') || '',
+  claudeModel: localStorage.getItem('ms_claudeModel') || 'claude-opus-5',
   baseURL: localStorage.getItem('ms_baseURL') || 'http://localhost:1234/v1',
   model: localStorage.getItem('ms_model') || '',
   temperature: parseFloat(localStorage.getItem('ms_temp') || '0.7'),
@@ -328,8 +353,25 @@ function logOrders(action, entries){
   S.orderLog = list.map(e=>({ label:e.label, category:e.category||'other', critical:!!e.critical, time })).concat(S.orderLog);
 }
 
-// ===================== MODEL API (OpenAI-compatible) =====================
+// ===================== MODEL API =====================
+const CLAUDE_API = 'https://api.anthropic.com/v1';
+const isClaude = () => S.provider==='claude';
+const activeModel = () => isClaude() ? S.claudeModel : S.model;
+function claudeHeaders(){
+  return {
+    'x-api-key': S.apiKey,
+    'anthropic-version': '2023-06-01',
+    // Required for calling the API straight from a browser page (CORS).
+    'anthropic-dangerous-direct-browser-access': 'true'
+  };
+}
+
 async function callModel(messages){
+  return isClaude() ? callClaude(messages) : callLocal(messages);
+}
+
+// OpenAI-compatible local server (LM Studio, Ollama, llama.cpp).
+async function callLocal(messages){
   const url = S.baseURL.replace(/\/+$/,'') + '/chat/completions';
   const res = await fetch(url, {
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -349,6 +391,36 @@ async function callModel(messages){
   }
   const data = await res.json();
   return data.choices?.[0]?.message?.content || '';
+}
+
+// Anthropic Messages API with the player's own key. System turns move to the
+// top-level `system` field; temperature is not sent (current Claude models reject it).
+async function callClaude(messages){
+  if(!S.apiKey) throw new Error('No Anthropic API key set. Open Settings ⚙ and paste your key.');
+  const system = messages.filter(m=>m.role==='system').map(m=>m.content).join('\n\n');
+  const body = {
+    model: S.claudeModel || 'claude-opus-5',
+    max_tokens: 16000,
+    system,
+    messages: messages.filter(m=>m.role!=='system').map(m=>({role:m.role, content:m.content}))
+  };
+  const headers = {...claudeHeaders(), 'Content-Type':'application/json'};
+  // On models that support it, let a policy decline on clinical content be
+  // retried on a fallback model instead of ending the turn.
+  if(/^claude-(opus-5|fable-5-1)$/.test(body.model)){
+    headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
+    body.fallbacks = 'default';
+  }
+  const res = await fetch(CLAUDE_API+'/messages', { method:'POST', headers, body: JSON.stringify(body) });
+  if(!res.ok){
+    const t = await res.text().catch(()=> '');
+    let msg = t.slice(0,200);
+    try{ msg = JSON.parse(t).error?.message || msg; }catch(_){}
+    throw new Error('Claude API returned '+res.status+(res.status===401?' (invalid API key)':'')+'. '+msg);
+  }
+  const data = await res.json();
+  if(data.stop_reason==='refusal') throw new Error('Claude declined this request'+(data.stop_details?.explanation?': '+data.stop_details.explanation:'.')+' Try rephrasing.');
+  return (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
 }
 
 function extractJSON(text){
@@ -382,8 +454,8 @@ const engineSystem = () => { const L = getLevel(S.level); return `You are the Be
 
 TRAINING LEVEL — ${L.label.toUpperCase()}. Bedside behaviour: ${L.enginePrompt}
 Debrief marking: ${L.debriefPrompt} The player is the treating physician. Given the hidden context, the recent transcript, and the player's latest action, respond with ONLY a JSON object of this shape:
-{"narrative":string,"updatedVitals":{"hr":number,"bpSystolic":number,"bpDiastolic":number,"rr":number,"o2":number,"temp":number,"rhythm":string},"vitalTrend":"stable"|"improving"|"worsening"|"critical","labResults":[{"name":string,"value":string,"unit":string,"flag":string}],"diagnosticReports":[{"title":string,"body":string}],"physicalExam":[{"system":string,"finding":string}],"clinicalRationale":string,"isCaseOver":boolean,"debrief":{"outcome":string,"score":number,"summary":string,"criticalEvents":[{"event":string,"feedback":string,"type":"positive"|"negative"|"neutral"}],"missedOpportunities":[string],"learningPoints":[string]}}
-Rules: (1) Only include labResults/diagnosticReports/physicalExam the player actually ordered or performed this turn; otherwise use empty arrays. (2) "flag" is "H","L","CRITICAL" or "". (3) Update ALL vitals fields and set vitalTrend from physiology + the player's action. (4) "clinicalRationale" explains WHY things changed. (5) Never reveal the diagnosis directly. (6) The player may carry several working diagnoses at once and may document or revise that differential mid-case — treat it as their charted reasoning, never confirm or deny it outright, and never let a wrong entry change the underlying truth. (7) The player may send several orders in one action: carry out every one and report the result of each. (8) Set "isCaseOver" true when the encounter ends (stabilized/admitted, transferred, or death) and fill "debrief" (score 0-100), scoring the breadth, ranking, and timing of the differential they documented and marking to the training level above; otherwise "debrief" may be an empty object {}. Output JSON only.`; };
+{"narrative":string,"updatedVitals":{"hr":number,"bpSystolic":number,"bpDiastolic":number,"rr":number,"o2":number,"temp":number,"rhythm":string},"vitalTrend":"stable"|"improving"|"worsening"|"critical","labResults":[{"name":string,"value":string,"unit":string,"flag":string}],"diagnosticReports":[{"title":string,"body":string}],"physicalExam":[{"system":string,"finding":string}],"clinicalRationale":string,"interpretedOrders":[{"label":string,"category":"critical"|"medication"|"lab"|"imaging"|"procedure"|"exam"|"history"|"consult"|"disposition"|"other","critical":boolean}],"isCaseOver":boolean,"debrief":{"outcome":string,"score":number,"summary":string,"criticalEvents":[{"event":string,"feedback":string,"type":"positive"|"negative"|"neutral"}],"missedOpportunities":[string],"learningPoints":[string]}}
+Rules: (1) Only include labResults/diagnosticReports/physicalExam the player actually ordered or performed this turn; otherwise use empty arrays. (2) "flag" is "H","L","CRITICAL" or "". (3) Update ALL vitals fields and set vitalTrend from physiology + the player's action. (4) "clinicalRationale" explains WHY things changed. (5) Never reveal the diagnosis directly. (6) The player may carry several working diagnoses at once and may document or revise that differential mid-case — treat it as their charted reasoning, never confirm or deny it outright, and never let a wrong entry change the underlying truth. (7) The player may send several orders in one action: carry out every one and report the result of each. (8) Set "isCaseOver" true when the encounter ends (stabilized/admitted, transferred, or death) and fill "debrief" (score 0-100), scoring the breadth, ranking, and timing of the differential they documented and marking to the training level above; otherwise "debrief" may be an empty object {}. (9) The player's action is often free text or voice dictation — informal, abbreviated, or slightly misheard. Work out the real clinical orders a physician would mean, whether or not they are on any menu, and carry them out. List each one in "interpretedOrders" under a concise standard order name (e.g. "Ceftriaxone 2 g IV", "CT head without contrast"); "critical" is true for time-critical resuscitative interventions. If an order is clinically meaningless, or dangerously incomplete (e.g. a high-risk drug with no dose), leave it out of "interpretedOrders" and have the nurse ask for clarification in the narrative instead of guessing. Output JSON only.`; };
 
 // ===================== ENGINE FLOWS =====================
 async function startCase(topic){
@@ -402,6 +474,7 @@ async function startCase(topic){
     S.labs=[]; S.reports=[]; S.exam=[]; S.trend='stable'; S.stage='play';
     S.dx=[]; S.orderLog=[]; S.basket=[]; S.view='sim'; S.orderGroup='critical'; S.orderSearch=''; S.logFilter='all';
     S.showSuggested = getLevel(S.level).suggestionsExpanded;
+    S.hintCount = 0;
     renderPlay();
     speak(c.intro);
   }catch(e){ showError(e.message); }
@@ -411,11 +484,13 @@ async function startCase(topic){
 async function progress(action, logEntries){
   if(S.loading) return;
   S.messages.push({role:'user', content:action});
-  logOrders(action, logEntries);
+  // Clicked orders are logged straight away; free text / dictation is logged
+  // once the engine says which orders it understood.
+  if(logEntries) logOrders(action, logEntries);
   renderPlay();
   setLoading(true);
   try{
-    const transcript = S.messages.slice(-10).map(m=>(m.role==='user'?'DOCTOR':'SIM')+': '+m.content).join('\n');
+    const transcript = transcriptFor(S.messages.slice(-10));
     const differential = differentialForPrompt();
     const user = `HIDDEN CONTEXT (never reveal directly): ${S.context}
 LEARNING POINTS: ${S.learningPoints.join('; ')}
@@ -430,11 +505,98 @@ DOCTOR'S LATEST ACTION: ${action}`;
     if(Array.isArray(r.labResults)) S.labs.push(...r.labResults);
     if(Array.isArray(r.diagnosticReports)) S.reports.unshift(...r.diagnosticReports);
     if(Array.isArray(r.physicalExam)) S.exam.unshift(...r.physicalExam);
+    if(!logEntries){
+      const understood = (Array.isArray(r.interpretedOrders)?r.interpretedOrders:[]).filter(o=>o&&o.label)
+        .map(o=>({ label:String(o.label), category:CATEGORY_LABELS[o.category]?o.category:classifyOrder(o.label), critical:!!o.critical }));
+      if(understood.length) logOrders(action, understood);
+      else if(!Array.isArray(r.interpretedOrders)) logOrders(action); // engine didn't say — fall back to local matching
+    }
     S.messages.push({role:'assistant', content:r.narrative||'…', rationale:r.clinicalRationale});
-    if(r.isCaseOver){ S.stage='debrief'; S.debrief = r.debrief||{}; renderDebrief(); speak(r.narrative); }
+    if(r.isCaseOver){
+      S.debrief = r.debrief||{};
+      speak(r.narrative);
+      if(isClaude()){ S.messages.push({role:'assistant', content:'Case closed. Your attending is reviewing the whole case…'}); renderChat(); await gradeCase(); }
+      S.stage='debrief'; renderDebrief();
+    }
     else { renderPlay(); speak(r.narrative); }
-  }catch(e){ showError(e.message); }
+  }catch(e){ if(!logEntries) logOrders(action); showError(e.message); }
   finally{ setLoading(false); }
+}
+
+// Transcript for prompts. Tutor exchanges are private coaching, so the bedside
+// engine never sees them.
+function transcriptFor(msgs){
+  return msgs.filter(m=>m.role!=='tutor'&&m.role!=='tutorQ')
+    .map(m=>(m.role==='user'?'DOCTOR':'SIM')+': '+m.content).join('\n');
+}
+function caseRecord(){
+  const orders = S.orderLog.slice().reverse().map(o=>`${o.time}  ${o.label} [${CATEGORY_LABELS[o.category]||'Order'}${o.critical?', critical':''}]`);
+  return `TRUE DIAGNOSIS: ${S.diagnosis}
+HIDDEN CONTEXT: ${S.context}
+EXPECTED CRITICAL ACTIONS: ${(S.criticalActions||[]).join('; ')||'not specified'}
+LEARNING POINTS: ${S.learningPoints.join('; ')}
+CURRENT VITALS: HR ${S.vitals.hr}, BP ${S.vitals.bpSystolic}/${S.vitals.bpDiastolic}, RR ${S.vitals.rr}, SpO2 ${S.vitals.o2}%, T ${S.vitals.temp}, ${S.vitals.rhythm} (trend: ${S.trend})
+ORDER LOG (oldest first):
+${orders.join('\n')||'no orders placed'}
+DOCUMENTED DIFFERENTIAL: ${S.dx.length?S.dx.map(x=>x.name+(x.confidence==='leading'?' (leading)':x.confidence==='ruled-out'?' (ruled out)':'')).join('; '):'none documented'}
+HINTS USED FROM THE TUTOR: ${S.hintCount||0}`;
+}
+
+// ===================== TUTOR (API mode) =====================
+// A private attending the player can ask when stuck. Each press without a
+// question escalates: nudge -> focused hint -> explicit next step.
+const tutorSystem = () => { const L = getLevel(S.level); return `You are an emergency-medicine attending quietly coaching a ${L.label.toLowerCase()} through a live simulated resuscitation. You can see the hidden case truth; the player cannot.
+Respond with ONLY a JSON object: {"hint":string,"why":string,"watchFor":string}
+- "hint": 1-3 sentences on what to do or think about next. Pitch it by HINT LEVEL: 1 = a Socratic nudge toward what they are overlooking (a question, no answer); 2 = name the domain or finding to focus on and why; 3 = the specific next action(s), with doses where relevant.
+- "why": one or two sentences of teaching — the physiology or guideline behind it.
+- "watchFor": one short line on a danger or trap coming up in this case, or "" if none.
+- If the player asks a direct question, answer it as a teacher would at their level.
+- Never state the hidden diagnosis outright, even at level 3; you may name the finding or test that would reveal it. If they are already on the right track, say so briefly and tell them what comes next.
+Output JSON only.`; };
+
+async function askTutor(question){
+  if(S.loading) return;
+  if(!isClaude()){
+    S.messages.push({role:'tutor', content:'The tutor is an API-mode feature. Open Settings ⚙, choose "Claude API key", and your attending will coach you live through the case.'});
+    renderChat(); return;
+  }
+  const q=(question||'').trim();
+  if(q) S.messages.push({role:'tutorQ', content:q});
+  else S.hintCount=(S.hintCount||0)+1;
+  const level = q ? Math.max(2, Math.min(3, S.hintCount||1)) : Math.min(3, S.hintCount);
+  S.loading=true; renderChat();
+  try{
+    const out = await callModel([{role:'system',content:tutorSystem()},{role:'user',content:`${caseRecord()}
+RECENT TRANSCRIPT:
+${transcriptFor(S.messages.slice(-12))}
+HINT LEVEL: ${level}
+${q?'PLAYER QUESTION: '+q:'The player pressed "Hint" — they are not sure what to do next.'}`}]);
+    const r = extractJSON(out);
+    S.messages.push({role:'tutor', content:r.hint||'Reassess the patient from the top: airway, breathing, circulation.', why:r.why, watchFor:r.watchFor, level});
+  }catch(e){ S.messages.push({role:'tutor', content:'⚠ Tutor unavailable: '+e.message}); }
+  finally{ S.loading=false; renderChat(); }
+}
+
+// ===================== GRADING (API mode) =====================
+// A dedicated pass over the whole case once it ends: every order with its
+// timing, the differential, and the hints used — instead of grading inside a
+// single bedside turn.
+const gradeSystem = () => { const L = getLevel(S.level); return `You are an emergency-medicine attending grading a completed simulated case for a ${L.label.toLowerCase()}. ${L.debriefPrompt}
+Respond with ONLY a JSON object:
+{"outcome":string,"score":number,"summary":string,"diagnosisReview":string,"actionReview":[{"action":string,"status":"done"|"late"|"missed"|"unnecessary"|"harmful","feedback":string}],"criticalEvents":[{"event":string,"feedback":string,"type":"positive"|"negative"|"neutral"}],"missedOpportunities":[string],"learningPoints":[string],"nextTime":[string]}
+Rules: (1) "actionReview" covers every expected critical action (done, late, or missed — judge timing from the order log) plus any order that was unnecessary or harmful; "feedback" says specifically what was right or wrong and what the correct move was, with doses where relevant. (2) "diagnosisReview" judges the differential: breadth, ranking, whether they anchored or closed prematurely, and what should have prompted the right diagnosis. (3) "score" 0-100 marked to the training level; deduct modestly for tutor hints used. (4) "nextTime" is 2-4 concrete habits to change. (5) Be specific to what this player actually did — quote their orders. Output JSON only.`; };
+
+async function gradeCase(){
+  try{
+    const out = await callModel([{role:'system',content:gradeSystem()},{role:'user',content:`${caseRecord()}
+FULL TRANSCRIPT:
+${transcriptFor(S.messages)}
+ENGINE'S PRELIMINARY DEBRIEF: ${JSON.stringify(S.debrief||{})}`}]);
+    const g = extractJSON(out);
+    S.debrief = {...(S.debrief||{}), ...g, graded:true};
+  }catch(e){
+    S.debrief = {...(S.debrief||{}), gradeError:e.message};
+  }
 }
 
 // ===================== TTS =====================
@@ -546,9 +708,13 @@ function renderSetup(){
     <div class="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(16,185,129,.06),transparent_70%)]"></div>
     <div class="max-w-2xl w-full z-10 fade">
       <div class="text-center mb-10">
-        <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-black uppercase tracking-[.3em] mb-6">Runs entirely on your local model</div>
+        ${isClaude()
+          ? `<div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[10px] font-black uppercase tracking-[.3em] mb-6">API mode · ${esc(S.claudeModel)}</div>`
+          : `<div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 text-[10px] font-black uppercase tracking-[.3em] mb-6">Runs entirely on your local model</div>`}
         <h1 class="text-6xl md:text-7xl font-black text-white tracking-tighter mb-3 uppercase italic">MediSim <span class="text-emerald-500 not-italic">ER</span></h1>
-        <p class="text-slate-500 text-base">High-fidelity bedside simulation powered by your own model in LM Studio. No keys, no cloud, no cost.</p>
+        <p class="text-slate-500 text-base">${isClaude()
+          ? 'High-fidelity bedside simulation powered by Claude through your Anthropic API key. Usage is billed to that key.'
+          : 'High-fidelity bedside simulation powered by your own model in LM Studio. No keys, no cloud, no cost.'}</p>
       </div>
       <div class="bg-slate-900/50 border border-slate-800 rounded-3xl p-7 mb-5">
         <label class="text-[10px] font-black uppercase tracking-widest text-slate-500">Training level</label>
@@ -686,6 +852,7 @@ function renderSim(){
         <button id="micBtn" class="p-3 rounded-2xl bg-slate-900 border border-slate-800 text-slate-500 hover:text-emerald-400 transition" title="Dictate">
           <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4"/></svg>
         </button>
+        <button id="tutorBtn" class="px-3 py-3 rounded-2xl border text-[10px] font-black uppercase tracking-widest transition ${isClaude()?'bg-amber-500/10 border-amber-500/40 text-amber-400 hover:bg-amber-500/20':'bg-slate-900 border-slate-800 text-slate-600 hover:text-amber-400'}" title="${isClaude()?'Ask your tutor — press with an empty box for a hint (gets more specific each time), or type a question first':'Tutor — available in API mode'}">💡 ${S.hintCount?'Hint '+Math.min(S.hintCount+1,3):'Tutor'}</button>
         <button id="sendBtn" class="p-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white transition">
           <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
         </button>
@@ -702,6 +869,7 @@ function renderSim(){
   $('critToggle').onclick=()=>{ S.showSuggested=!S.showSuggested; renderSim(); };
   $('allOrders').onclick=()=>{ S.view='orders'; renderTabs(); renderView(); };
   $('micBtn').onclick=startDictation;
+  $('tutorBtn').onclick=()=>{ if(S.loading) return; const q=cmd.value.trim(); cmd.value=''; cmd.style.height='auto'; askTutor(q).then(()=>{ if(S.view==='sim') renderSim(); }); };
 }
 
 // ---------- ORDERS ----------
@@ -983,6 +1151,14 @@ function vbox(label,id,unit){
 function renderChat(){
   const c=$('chat'); if(!c) return;
   c.innerHTML=S.messages.map(m=>{
+    if(m.role==='tutorQ') return `<div class="flex justify-end fade"><div class="max-w-[80%] bg-amber-500/[.06] border border-amber-500/25 rounded-3xl rounded-tr-none p-4 text-sm text-amber-100 whitespace-pre-wrap"><div class="text-[9px] font-black uppercase tracking-[.2em] text-amber-500/70 mb-1">Asked the tutor</div>${esc(m.content)}</div></div>`;
+    if(m.role==='tutor') return `<div class="flex gap-3 fade"><div class="w-9 h-9 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 text-base">💡</div>
+      <div class="max-w-[80%] bg-amber-500/[.05] border border-amber-500/25 rounded-3xl rounded-tl-none p-4 text-sm text-amber-50">
+        <div class="text-[9px] font-black uppercase tracking-[.2em] text-amber-500/80 mb-1.5">Tutor${m.level?' · hint '+m.level+' of 3':''} — private, the team can't hear this</div>
+        <div class="whitespace-pre-wrap leading-relaxed">${esc(m.content)}</div>
+        ${m.why?`<div class="mt-2 text-xs text-amber-200/70 leading-relaxed"><b class="text-amber-400/80">Why:</b> ${esc(m.why)}</div>`:''}
+        ${m.watchFor?`<div class="mt-1.5 text-xs text-red-300/80 leading-relaxed"><b class="text-red-400/80">Watch for:</b> ${esc(m.watchFor)}</div>`:''}
+      </div></div>`;
     if(m.role==='user') return `<div class="flex justify-end fade"><div class="max-w-[80%] bg-blue-600/10 border border-blue-500/20 rounded-3xl rounded-tr-none p-4 text-sm text-blue-100 whitespace-pre-wrap">${esc(m.content)}</div></div>`;
     return `<div class="flex gap-3 fade"><div class="w-9 h-9 rounded-2xl bg-emerald-600/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500 shrink-0">
       <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg></div>
@@ -996,6 +1172,19 @@ function renderChat(){
 function section(title,color,inner){ return `<div class="space-y-2 mb-6"><div class="text-[10px] font-black uppercase tracking-widest text-${color}-500">${title}</div>${inner}</div>`; }
 
 // ===================== RENDER: DEBRIEF =====================
+const REVIEW_STYLE = {
+  done:['Done','emerald'], late:['Late','yellow'], missed:['Missed','red'],
+  unnecessary:['Unnecessary','slate'], harmful:['Harmful','red']
+};
+function actionReviewSec(list){
+  if(!Array.isArray(list)||!list.length) return '';
+  return `<div class="space-y-2"><h3 class="text-[10px] font-black uppercase tracking-widest text-slate-500">Action-by-Action Review</h3>${list.map(a=>{
+    const [lbl,c]=REVIEW_STYLE[a.status]||['Note','slate'];
+    return `<div class="p-4 bg-slate-900/40 border border-slate-800 rounded-xl flex gap-3 items-start">
+      <span class="shrink-0 mt-0.5 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest bg-${c}-500/10 border border-${c}-500/40 text-${c}-400">${lbl}</span>
+      <div><div class="text-sm font-bold text-slate-200">${esc(a.action)}</div><p class="text-xs text-slate-400 mt-1 leading-relaxed">${esc(a.feedback)}</p></div></div>`;
+  }).join('')}</div>`;
+}
 function renderDebrief(){
   const d=S.debrief||{}; const score=Math.round(d.score||0);
   clearInterval(driftTimer); cancelAnimationFrame(ecgRAF);
@@ -1005,7 +1194,7 @@ function renderDebrief(){
     <div class="max-w-3xl mx-auto fade space-y-6">
       <div class="text-center py-6">
         <div class="text-[10px] font-black uppercase tracking-[.3em] text-slate-500 mb-2">Case Debrief — ${esc(S.diagnosis)}</div>
-        <div class="text-[9px] font-black uppercase tracking-[.25em] text-slate-600 mb-2">Marked at ${esc(getLevel(S.level).label)} level</div>
+        <div class="text-[9px] font-black uppercase tracking-[.25em] text-slate-600 mb-2">Marked at ${esc(getLevel(S.level).label)} level${d.graded?' · <span class="text-amber-400">full review by Claude</span>':''}${S.hintCount?' · '+S.hintCount+' hint'+(S.hintCount>1?'s':'')+' used':''}</div>
         <div class="text-7xl font-black mono ${score>=80?'text-emerald-500':score>=60?'text-yellow-500':'text-red-500'}">${score}<span class="text-2xl text-slate-600">/100</span></div>
         <div class="text-lg font-bold text-white mt-1">${esc(d.outcome||'Case complete')}</div>
       </div>
@@ -1018,10 +1207,13 @@ function renderDebrief(){
           return `<span class="px-3 py-1.5 rounded-xl text-xs font-bold border ${hit?'bg-emerald-500/10 border-emerald-500/40 text-emerald-300':x.confidence==='ruled-out'?'bg-slate-900/40 border-slate-800 text-slate-600 line-through':'bg-slate-900/60 border-slate-700 text-slate-300'}">${hit?'✓ ':''}${esc(x.name)}${x.confidence==='leading'?' <span class="text-[9px] uppercase tracking-widest opacity-60">Leading</span>':''}</span>`;
         }).join('')}</div>
         ${d.diagnosisReview?`<p class="text-xs text-slate-400 leading-relaxed pt-1">${esc(d.diagnosisReview)}</p>`:''}
-      </div>`:''}
+      </div>`:(d.diagnosisReview?`<div class="space-y-2"><h3 class="text-[10px] font-black uppercase tracking-widest text-fuchsia-400">Diagnostic Reasoning</h3><p class="text-xs text-slate-400 leading-relaxed">${esc(d.diagnosisReview)}</p></div>`:'')}
+      ${d.gradeError?`<p class="text-xs text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">The full review couldn't run (${esc(d.gradeError)}), so this is the bedside engine's quick debrief.</p>`:''}
+      ${actionReviewSec(d.actionReview)}
       ${ev.length?`<div class="space-y-2"><h3 class="text-[10px] font-black uppercase tracking-widest text-slate-500">Critical Events</h3>${ev.map(e=>`<div class="p-4 bg-slate-900/40 border border-slate-800 rounded-xl border-l-4 ${e.type==='positive'?'border-l-emerald-600':e.type==='negative'?'border-l-red-600':'border-l-slate-600'}"><div class="text-sm font-bold ${e.type==='positive'?'text-emerald-400':e.type==='negative'?'text-red-400':'text-slate-300'}">${esc(e.event)}</div><p class="text-xs text-slate-400 mt-1">${esc(e.feedback)}</p></div>`).join('')}</div>`:''}
       ${arrSec('Missed Opportunities','red',d.missedOpportunities)}
       ${arrSec('Key Learning Points','emerald',d.learningPoints&&d.learningPoints.length?d.learningPoints:S.learningPoints)}
+      ${arrSec('Next Time','amber',d.nextTime)}
       <div class="flex gap-3 pt-2">
         <button id="dlBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-xl transition">Download report</button>
         <button id="newBtn" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl transition">New case</button>
@@ -1045,12 +1237,12 @@ Score: ${score}/100
 
 SUMMARY
 ${d.summary||''}
-
+${d.diagnosisReview?'\nDIAGNOSTIC REASONING\n'+d.diagnosisReview+'\n':''}${Array.isArray(d.actionReview)&&d.actionReview.length?'\nACTION-BY-ACTION REVIEW\n'+d.actionReview.map(x=>'- ['+String(x.status||'').toUpperCase()+'] '+x.action+' — '+x.feedback).join('\n')+'\n':''}
 MISSED OPPORTUNITIES
 ${(d.missedOpportunities||[]).map(x=>'- '+x).join('\n')}
 
 LEARNING POINTS
-${((d.learningPoints&&d.learningPoints.length?d.learningPoints:S.learningPoints)||[]).map(x=>'- '+x).join('\n')}`;
+${((d.learningPoints&&d.learningPoints.length?d.learningPoints:S.learningPoints)||[]).map(x=>'- '+x).join('\n')}${Array.isArray(d.nextTime)&&d.nextTime.length?'\n\nNEXT TIME\n'+d.nextTime.map(x=>'- '+x).join('\n'):''}${S.hintCount?'\n\nTutor hints used: '+S.hintCount:''}`;
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain'}));
   a.download='MediSim_'+S.diagnosis.replace(/\s+/g,'_')+'.txt'; a.click();
@@ -1068,24 +1260,74 @@ function showError(msg){
 }
 
 // ===================== CONNECTION TEST / DETECT =====================
+// Header badge + status line. The header stays on screen in setup, the sim, and
+// the debrief, so the player can always see which engine is running the case.
+function setConn(state){ // 'connected' | 'offline' | 'unchecked'
+  const claude=isClaude();
+  const badge=$('modeBadge');
+  badge.textContent=claude?'API mode':'Local mode';
+  badge.className='px-2 py-0.5 rounded-md border text-[8px] font-black uppercase tracking-[.2em] transition '+
+    (claude?'bg-amber-500/10 border-amber-500/40 text-amber-400 hover:bg-amber-500/20':'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20');
+  const label=claude?'Claude API':'Local Engine';
+  const model=activeModel();
+  $('connDot').className='w-1.5 h-1.5 rounded-full '+(state==='connected'?'bg-emerald-500 pulse-dot':state==='offline'?'bg-red-500':'bg-slate-600');
+  $('connText').textContent=label+': '+(state==='connected'?'connected'+(model?' · '+model:''):state==='offline'?'offline':'not checked');
+}
+
+async function fetchWithTimeout(url, opts, ms){
+  const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(), ms);
+  try{ return await fetch(url, {...opts, signal:ctl.signal}); }
+  finally{ clearTimeout(t); }
+}
+
+// Lists models on the active engine. Throws with a player-readable message.
+async function listModels(){
+  if(isClaude()){
+    if(!S.apiKey) throw new Error('Paste your Anthropic API key first.');
+    let res;
+    try{ res=await fetchWithTimeout(CLAUDE_API+'/models?limit=100',{headers:claudeHeaders()},10000); }
+    catch(e){ throw new Error(e.name==='AbortError'?'api.anthropic.com did not answer within 10 s.':'Could not reach api.anthropic.com (network blocked or offline).'); }
+    if(res.status===401) throw new Error('The API key was rejected (401). Check it was copied in full.');
+    if(res.status===403) throw new Error('The API key does not have permission (403).');
+    if(!res.ok) throw new Error('Claude API returned HTTP '+res.status+'.');
+    return ((await res.json()).data||[]).map(m=>m.id);
+  }
+  let res;
+  try{ res=await fetchWithTimeout(S.baseURL.replace(/\/+$/,'')+'/models',{},8000); }
+  catch(e){ throw new Error(e.name==='AbortError'
+    ? S.baseURL+' did not answer within 8 s. Is the LM Studio server started?'
+    : 'Cannot reach '+S.baseURL+'. Start the server in LM Studio and enable CORS.'); }
+  if(!res.ok) throw new Error(S.baseURL+' returned HTTP '+res.status+'.');
+  return ((await res.json()).data||[]).map(m=>m.id);
+}
+
 async function testConnection(silent){
+  const btn=$('testBtn');
+  if(!silent){ btn.disabled=true; btn.textContent='Testing…'; $('testMsg').innerHTML='<span class="text-slate-400">Contacting '+esc(isClaude()?'api.anthropic.com':S.baseURL)+'…</span>'; }
   try{
-    const res=await fetch(S.baseURL.replace(/\/+$/,'')+'/models');
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    const ids=(data.data||[]).map(m=>m.id);
-    $('connDot').className='w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot';
-    $('connText').textContent='Local Engine: connected';
-    if(!silent && $('detectMsg')) $('detectMsg').innerHTML='<span class="text-emerald-400">Connected. Models: '+esc(ids.join(', ')||'(none loaded)')+'</span>';
-    if(!S.model && ids[0]){ S.model=ids[0]; if($('model'))$('model').value=ids[0]; localStorage.setItem('ms_model',ids[0]); }
-    if(S.stage==='setup'&&$('setupHint')&&!$('setupHint').textContent) $('setupHint').textContent='Connected to local model — ready.';
+    const ids=await listModels();
+    if(isClaude()){
+      if(!silent){
+        const missing=ids.length && !ids.includes(S.claudeModel);
+        $('detectMsg').innerHTML=missing
+          ? '<span class="text-amber-400">'+esc(S.claudeModel||'(blank)')+' is not available on this key. Available: '+esc(ids.join(', '))+'</span>'
+          : '<span class="text-emerald-400">Models on this key: '+esc(ids.join(', '))+'</span>';
+      }
+    }else{
+      if(!silent && $('detectMsg')) $('detectMsg').innerHTML='<span class="text-emerald-400">Connected. Models: '+esc(ids.join(', ')||'(none loaded)')+'</span>';
+      if(!S.model && ids[0]){ S.model=ids[0]; if($('model'))$('model').value=ids[0]; localStorage.setItem('ms_model',ids[0]); }
+    }
+    setConn('connected');
+    if(!silent) $('testMsg').innerHTML='<span class="text-emerald-400">✓ Connected — '+esc(isClaude()?'Claude API ('+S.claudeModel+')':'local engine ('+(S.model||'no model loaded')+')')+'</span>';
+    if(S.stage==='setup'&&$('setupHint')&&!S.loading) $('setupHint').textContent=isClaude()?'Connected to Claude API — ready.':'Connected to local model — ready.';
     return ids;
   }catch(e){
-    $('connDot').className='w-1.5 h-1.5 rounded-full bg-red-500';
-    $('connText').textContent='Local Engine: offline';
-    if(!silent && $('detectMsg')) $('detectMsg').innerHTML='<span class="text-red-400">Cannot reach '+esc(S.baseURL)+'. Start the server in LM Studio and enable CORS.</span>';
-    if(S.stage==='setup'&&$('setupHint')) $('setupHint').innerHTML='<span class="text-slate-500">Tip: open Settings ⚙ and connect to LM Studio first.</span>';
+    setConn('offline');
+    if(!silent) $('testMsg').innerHTML='<span class="text-red-400">✕ '+esc(e.message)+'</span>';
+    if(S.stage==='setup'&&$('setupHint')) $('setupHint').innerHTML='<span class="text-slate-500">'+esc(isClaude()?'Tip: open Settings ⚙ and check your Anthropic API key.':'Tip: open Settings ⚙ and connect to LM Studio first.')+'</span>';
     return null;
+  }finally{
+    if(!silent){ btn.disabled=false; btn.textContent='Test connection'; }
   }
 }
 
@@ -1102,21 +1344,51 @@ function startDictation(){
 
 // ===================== SETTINGS WIRING =====================
 $('settingsBtn').onclick=()=>{ openSettings(); };
+$('modeBadge').onclick=()=>{ openSettings(); };
 $('closeSettings').onclick=()=>{ $('settingsModal').classList.add('hidden'); $('settingsModal').classList.remove('flex'); };
+function syncSettingsForm(){
+  const claude=isClaude();
+  document.querySelectorAll('.provBtn').forEach(b=>{
+    const on=b.dataset.provider===S.provider;
+    b.className='provBtn py-3 rounded-xl border text-xs font-black uppercase tracking-widest transition '+
+      (on?(claude?'bg-amber-500/10 border-amber-500/50 text-amber-400':'bg-emerald-500/10 border-emerald-500/50 text-emerald-400'):'bg-slate-950 border-slate-800 text-slate-500 hover:border-slate-700');
+  });
+  ['apiKeyRow','claudeHelp'].forEach(id=>$(id).classList.toggle('hidden',!claude));
+  ['baseURLRow','tempRow','localHelp'].forEach(id=>$(id).classList.toggle('hidden',claude));
+  $('model').value=activeModel();
+  $('model').placeholder=claude?'e.g. claude-opus-5':'e.g. qwen2.5-32b-instruct';
+  $('detectMsg').textContent=''; $('testMsg').textContent='';
+}
 function openSettings(){
-  $('baseURL').value=S.baseURL; $('model').value=S.model; $('temp').value=S.temperature; $('tempVal').textContent=S.temperature;
+  $('baseURL').value=S.baseURL; $('apiKey').value=S.apiKey; $('temp').value=S.temperature; $('tempVal').textContent=S.temperature;
+  syncSettingsForm();
   $('settingsModal').classList.remove('hidden'); $('settingsModal').classList.add('flex');
 }
-$('baseURL').addEventListener('change',e=>{ S.baseURL=e.target.value.trim(); localStorage.setItem('ms_baseURL',S.baseURL); });
-$('model').addEventListener('change',e=>{ S.model=e.target.value.trim(); localStorage.setItem('ms_model',S.model); });
+// Read every field, not just the ones that fired 'change' — clicking Test straight
+// after typing must use what's in the box.
+function saveSettingsForm(){
+  S.baseURL=$('baseURL').value.trim(); localStorage.setItem('ms_baseURL',S.baseURL);
+  S.apiKey=$('apiKey').value.trim(); localStorage.setItem('ms_apiKey',S.apiKey);
+  const m=$('model').value.trim();
+  if(isClaude()){ S.claudeModel=m; localStorage.setItem('ms_claudeModel',m); }
+  else { S.model=m; localStorage.setItem('ms_model',m); }
+}
+document.querySelectorAll('.provBtn').forEach(b=>b.onclick=()=>{
+  saveSettingsForm();
+  S.provider=b.dataset.provider; localStorage.setItem('ms_provider',S.provider);
+  syncSettingsForm(); setConn('unchecked');
+  if(S.stage==='setup'){ const t=$('topic')?.value; renderSetup(); if(t&&$('topic')) $('topic').value=t; }
+});
+['baseURL','apiKey','model'].forEach(id=>$(id).addEventListener('change',()=>{ saveSettingsForm(); setConn('unchecked'); }));
 $('temp').addEventListener('input',e=>{ S.temperature=parseFloat(e.target.value); $('tempVal').textContent=S.temperature; localStorage.setItem('ms_temp',S.temperature); });
-$('detectBtn').onclick=()=>{ S.baseURL=$('baseURL').value.trim(); testConnection(false); };
-$('testBtn').onclick=()=>{ S.baseURL=$('baseURL').value.trim(); localStorage.setItem('ms_baseURL',S.baseURL); testConnection(false); };
+$('detectBtn').onclick=()=>{ saveSettingsForm(); testConnection(false); };
+$('testBtn').onclick=()=>{ saveSettingsForm(); testConnection(false); };
 $('ttsBtn').onclick=()=>{ S.tts=!S.tts; localStorage.setItem('ms_tts',S.tts?'1':'0'); if(!S.tts&&'speechSynthesis'in window) speechSynthesis.cancel();
   $('ttsBtn').className='p-2.5 rounded-xl border transition '+(S.tts?'bg-emerald-500/10 border-emerald-500/40 text-emerald-400':'bg-slate-900 border-slate-800 text-slate-500'); };
 $('resetBtn').onclick=()=>{ if('speechSynthesis'in window)speechSynthesis.cancel(); clearInterval(driftTimer); cancelAnimationFrame(ecgRAF); renderSetup(); };
 
 // init
+setConn('unchecked');
 if(!S.tts) $('ttsBtn').className='p-2.5 rounded-xl border transition bg-slate-900 border-slate-800 text-slate-500';
 renderSetup();
 </script>
