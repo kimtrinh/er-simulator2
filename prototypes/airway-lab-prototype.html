@@ -1,0 +1,823 @@
+<title>Airway Lab Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+/* Layout: full-bleed 3D stage; a slim top bar and a bottom control dock float over it, like a bedside device.
+   Deliberately a single dark look — it is a monitor-lit procedure space. */
+:root {
+  --bg: #0f1417;
+  --panel: rgba(17, 23, 26, 0.84);
+  --line: rgba(150, 185, 182, 0.18);
+  --fg: #e6ecea;
+  --muted: #8f9e9c;
+  --accent: #8fd0c4;
+  --accent-ink: #0b1614;
+  --warn: #f0b35e;
+  --good: #a3d68f;
+  --f-display: 'IBM Plex Sans Condensed', 'Arial Narrow', system-ui, sans-serif;
+  --f-body: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 var(--f-body); overflow: hidden; }
+#app { position: relative; height: 100%; overflow: hidden; }
+#stage { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+
+.bar { position: absolute; inset: 0 0 auto 0; display: flex; gap: 10px 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 12px 16px; pointer-events: none; }
+.bar > * { pointer-events: auto; }
+.brand h1 { margin: 0; font: 600 19px/1.1 var(--f-display); letter-spacing: 0.01em; text-wrap: balance; }
+.brand p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.tabs { display: flex; gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.tabs button { appearance: none; border: 0; background: transparent; color: var(--muted); font: 500 13px/1 var(--f-body); padding: 9px 14px; border-radius: 999px; cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+.tabs button:focus-visible, .btn:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.dock { position: absolute; inset: auto 0 0 0; display: flex; flex-direction: column; gap: 8px; align-items: center; padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px)); pointer-events: none; }
+.dock > * { pointer-events: auto; width: 100%; max-width: 780px; }
+.coach { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.coach .dot { flex: none; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--accent); }
+.coach[data-tone="warn"] .dot { background: var(--warn); }
+.coach[data-tone="good"] .dot { background: var(--good); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.chip { font: 500 12px/1 var(--f-mono); font-variant-numeric: tabular-nums; padding: 6px 9px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); color: var(--fg); white-space: nowrap; }
+.chip b { font-weight: 400; color: var(--muted); margin-right: 6px; text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; }
+.panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 18px; padding: 11px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.ctl { display: grid; gap: 3px; font-size: 12px; color: var(--muted); min-width: 0; }
+.ctl .row { display: flex; justify-content: space-between; gap: 8px; }
+.ctl .val { font-family: var(--f-mono); font-variant-numeric: tabular-nums; color: var(--fg); }
+input[type="range"] { width: 100%; margin: 0; accent-color: var(--accent); height: 22px; }
+.views { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.btn { appearance: none; font: 500 12.5px/1 var(--f-body); color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; cursor: pointer; }
+.btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.hint { font-size: 11.5px; color: var(--muted); text-align: center; }
+.hint kbd { font: 500 10.5px/1 var(--f-mono); padding: 2px 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--fg); }
+#status { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font: 500 13px var(--f-mono); pointer-events: none; }
+@media (max-width: 520px) {
+  .brand p { display: none; }
+  .panel { grid-template-columns: 1fr 1fr; padding: 9px 12px; gap: 4px 14px; }
+  .hint { display: none; }
+}
+</style>
+
+<div id="app">
+  <canvas id="stage" aria-label="3D view of the endotracheal tube and video laryngoscope"></canvas>
+  <div id="status">Loading 3D…</div>
+
+  <header class="bar">
+    <div class="brand">
+      <h1>Airway Lab · prototype</h1>
+      <p>Every model here is generated in code. No Blender, no downloaded assets.</p>
+    </div>
+    <div class="tabs" role="tablist" aria-label="View">
+      <button role="tab" id="tab-inst" aria-selected="true">Instruments</button>
+      <button role="tab" id="tab-scope" aria-selected="false">Scope view</button>
+    </div>
+  </header>
+
+  <div class="dock" id="dock">
+    <div class="coach" id="coach" hidden><span class="dot"></span><span id="coach-text"></span></div>
+    <div class="chips" id="chips"></div>
+
+    <div class="panel" id="panel-inst">
+      <label class="ctl"><span class="row">Cuff <span class="val" id="v-cuff-i">0 cmH₂O</span></span>
+        <input type="range" id="cuff-i" min="0" max="30" step="1" value="0"></label>
+      <label class="ctl"><span class="row">Stylet pulled back <span class="val" id="v-sty-i">0 cm</span></span>
+        <input type="range" id="sty-i" min="0" max="8" step="0.5" value="0"></label>
+      <div class="views" role="group" aria-label="Camera">
+        <button class="btn" id="view-full" aria-pressed="true">Whole set</button>
+        <button class="btn" id="view-tip" aria-pressed="false">Cuff &amp; bevel</button>
+        <button class="btn" id="view-blade" aria-pressed="false">Blade camera</button>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-scope" hidden>
+      <label class="ctl"><span class="row">Blade depth <span class="val" id="v-depth"></span></span>
+        <input type="range" id="depth" min="0" max="1" step="0.01" value="0.3"></label>
+      <label class="ctl"><span class="row">Blade lift <span class="val" id="v-lift"></span></span>
+        <input type="range" id="lift" min="0" max="1" step="0.01" value="0.75"></label>
+      <label class="ctl"><span class="row">Advance tube <span class="val" id="v-adv"></span></span>
+        <input type="range" id="adv" min="0" max="20" step="0.1" value="6"></label>
+      <label class="ctl"><span class="row">Rotate tube <span class="val" id="v-roll"></span></span>
+        <input type="range" id="roll" min="-90" max="120" step="1" value="0"></label>
+      <label class="ctl"><span class="row">Stylet pulled back <span class="val" id="v-sty-s"></span></span>
+        <input type="range" id="sty-s" min="0" max="8" step="0.5" value="0"></label>
+      <label class="ctl"><span class="row">Cuff <span class="val" id="v-cuff-s"></span></span>
+        <input type="range" id="cuff-s" min="0" max="30" step="1" value="0"></label>
+    </div>
+
+    <p class="hint" id="hint"></p>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+const V3 = THREE.Vector3, TAU = Math.PI * 2;
+const $ = (id) => document.getElementById(id);
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+
+// ---------------------------------------------------------------- renderer
+const canvas = $('stage');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.toneMapping = THREE.AgXToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+// ---------------------------------------------------------------- procedural textures
+function rng(seed) { let s = seed; return () => ((s = (s * 16807) % 2147483647) - 1) / 2147483646; }
+// Sum of sinusoids with integer frequencies: organic-looking and perfectly tileable.
+function tileNoise(seed, n, maxF, falloff) {
+  const r = rng(seed), cs = [];
+  for (let k = 0; k < n; k++) {
+    let fx = Math.round((r() * 2 - 1) * maxF), fy = Math.round((r() * 2 - 1) * maxF);
+    if (!fx && !fy) fx = 1;
+    cs.push([fx, fy, r() * TAU, 1 / Math.pow(Math.hypot(fx, fy), falloff)]);
+  }
+  return (u, v) => { let s = 0; for (const c of cs) s += c[3] * Math.sin(TAU * (c[0] * u + c[1] * v) + c[2]); return s; };
+}
+function normalize01(arr) { let lo = Infinity, hi = -Infinity; for (const x of arr) { lo = Math.min(lo, x); hi = Math.max(hi, x); } for (let i = 0; i < arr.length; i++) arr[i] = (arr[i] - lo) / (hi - lo); }
+
+function drawVessels(ctx, S, seed, count, width) {
+  const r = rng(seed);
+  const seg = (x0, y0, x1, y1) => { for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) { ctx.beginPath(); ctx.moveTo(x0 + ox, y0 + oy); ctx.lineTo(x1 + ox, y1 + oy); ctx.stroke(); } };
+  const grow = (x, y, ang, w, depth) => {
+    const steps = 16 + Math.floor(r() * 30);
+    for (let s = 0; s < steps; s++) {
+      ang += (r() - 0.5) * 0.55;
+      const nx = x + Math.cos(ang) * 5, ny = y + Math.sin(ang) * 5;
+      ctx.lineWidth = w; seg(x, y, nx, ny); x = nx; y = ny; w *= 0.982;
+      if (depth < 3 && r() < 0.07) grow(x, y, ang + (r() < 0.5 ? -1 : 1) * (0.5 + r() * 0.7), w * 0.68, depth + 1);
+    }
+  };
+  ctx.lineCap = 'round';
+  for (let i = 0; i < count; i++) grow(r() * S, r() * S, r() * TAU, width * (0.6 + r() * 0.6), 0);
+}
+
+function makeMucosa(S = 512) {
+  const fineN = tileNoise(3, 44, 26, 0.85), blotN = tileNoise(5, 22, 5, 1.1);
+  const fine = new Float32Array(S * S), blot = new Float32Array(S * S);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) { const i = y * S + x; fine[i] = fineN(x / S, y / S); blot[i] = blotN(x / S, y / S); }
+  normalize01(fine); normalize01(blot);
+  const mk = () => { const c = document.createElement('canvas'); c.width = c.height = S; return c; };
+  const colC = mk(), bumpC = mk(), cx = colC.getContext('2d'), bx = bumpC.getContext('2d');
+  const ci = cx.createImageData(S, S), bi = bx.createImageData(S, S);
+  const dark = [168, 74, 76], light = [226, 146, 136];
+  for (let i = 0; i < S * S; i++) {
+    const t = blot[i], f = (fine[i] - 0.5) * 22;
+    ci.data[i * 4] = lerp(dark[0], light[0], t) + f; ci.data[i * 4 + 1] = lerp(dark[1], light[1], t) + f * 0.7; ci.data[i * 4 + 2] = lerp(dark[2], light[2], t) + f * 0.6; ci.data[i * 4 + 3] = 255;
+    const g = 128 + (fine[i] - 0.5) * 150 + (blot[i] - 0.5) * 40;
+    bi.data[i * 4] = bi.data[i * 4 + 1] = bi.data[i * 4 + 2] = g; bi.data[i * 4 + 3] = 255;
+  }
+  cx.putImageData(ci, 0, 0); bx.putImageData(bi, 0, 0);
+  cx.strokeStyle = 'rgba(120, 22, 40, 0.28)'; drawVessels(cx, S, 17, 12, 2.4);
+  cx.strokeStyle = 'rgba(150, 40, 60, 0.18)'; drawVessels(cx, S, 29, 18, 1.2);
+  bx.strokeStyle = 'rgba(255, 255, 255, 0.22)'; drawVessels(bx, S, 17, 12, 2.4);
+  const tex = (c, srgb) => { const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; if (srgb) t.colorSpace = THREE.SRGBColorSpace; return t; };
+  return { map: tex(colC, true), bump: tex(bumpC, false) };
+}
+
+// Printed markings, radiopaque stripe and inflation lumen for the ETT. u = distance from tip (0–34 cm), v = around.
+function makeTubeMarkings() {
+  const W = 2048, H = 128, PX = W / 34;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#2d6fd8'; g.fillRect(0, 58, W, 9);                       // radiopaque line
+  g.fillStyle = 'rgba(255,255,255,0.28)'; g.fillRect(4.4 * PX, 100, 23 * PX, 4); // inflation lumen
+  g.fillStyle = 'rgba(18,20,26,0.92)'; g.strokeStyle = 'rgba(18,20,26,0.92)'; g.lineWidth = 2;
+  for (let cm = 12; cm <= 30; cm++) {
+    const x = W - cm * PX;           // flipped so numbers read from the tip toward the connector
+    g.fillRect(x - 1, 14, 2, cm % 2 ? 7 : 12);
+    if (cm % 2 === 0) { g.save(); g.translate(x, 44); g.scale(1.45, 1); g.font = '600 17px Arial, Helvetica, sans-serif'; g.textAlign = 'center'; g.fillText(String(cm), 0, 0); g.restore(); }
+  }
+  g.save(); g.translate(W - 25 * PX, 92); g.scale(1.45, 1); g.font = '600 15px Arial, Helvetica, sans-serif'; g.fillText('7.5  ORAL  ID 7.5 mm', 0, 0); g.restore();
+  g.lineWidth = 2; g.beginPath(); g.ellipse(W - 1.6 * PX, 88, 0.32 * PX, 12, 0, 0, TAU); g.stroke();   // Murphy eye outline
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; t.wrapT = THREE.RepeatWrapping; t.offset.y = 0.25;
+  return t;
+}
+
+function makeBackdrop() {
+  const c = document.createElement('canvas'); c.width = 8; c.height = 256;
+  const g = c.getContext('2d'), grd = g.createLinearGradient(0, 0, 0, 256);
+  grd.addColorStop(0, '#46514f'); grd.addColorStop(0.55, '#262e2f'); grd.addColorStop(1, '#141819');
+  g.fillStyle = grd; g.fillRect(0, 0, 8, 256);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
+function makeGripBump() {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 256; const g = c.getContext('2d');
+  g.fillStyle = '#808080'; g.fillRect(0, 0, 64, 256);
+  for (let y = 0; y < 256; y += 8) { g.fillStyle = '#b0b0b0'; g.fillRect(0, y, 64, 3); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+}
+
+// ---------------------------------------------------------------- geometry: loft along a spine
+// fn(d, out) gives the spine point at arc distance d. The cross-section can vary per angle, so one
+// function builds tubes, tissue walls, cords and blades.
+const _P = new V3(), _T = new V3(), _N = new V3(), _B = new V3(), _a = new V3(), _b = new V3();
+function frameAt(fn, d, ref) {
+  fn(d - 0.01, _a); fn(d + 0.01, _b); _T.subVectors(_b, _a).normalize(); fn(d, _P);
+  _N.copy(ref).addScaledVector(_T, -_T.dot(ref)).normalize(); _B.crossVectors(_T, _N);
+}
+const ellipseR = (a, rx, ry) => 1 / Math.sqrt((Math.cos(a) / rx) ** 2 + (Math.sin(a) / ry) ** 2);
+
+function loft({ fn, d0, d1, rings, radial, ref = new V3(0, 1, 0), radius, roll = 0, power = 1, bevel, axial, uv, disp, color }) {
+  const n = (rings + 1) * (radial + 1);
+  const pos = new Float32Array(n * 3), uvs = new Float32Array(n * 2), col = color ? new Float32Array(n * 3) : null;
+  let k = 0;
+  for (let i = 0; i <= rings; i++) {
+    const f = i / rings, d = d0 + (d1 - d0) * Math.pow(f, power);
+    for (let j = 0; j <= radial; j++) {
+      const a = (j / radial) * TAU;
+      let dd = bevel ? bevel(d, a) : d;
+      if (axial) dd += axial(f, a);
+      frameAt(fn, dd, ref);
+      const r = radius(f, a, dd) + (disp ? disp(i, j, f, a) : 0);
+      const ang = a + roll, c = Math.cos(ang) * r, s = Math.sin(ang) * r;
+      pos[k * 3] = _P.x + _N.x * c + _B.x * s; pos[k * 3 + 1] = _P.y + _N.y * c + _B.y * s; pos[k * 3 + 2] = _P.z + _N.z * c + _B.z * s;
+      const u = uv ? uv(f, a, dd) : f;
+      uvs[k * 2] = u; uvs[k * 2 + 1] = j / radial;
+      if (col) { const cc = color(f, a, dd); col[k * 3] = cc[0]; col[k * 3 + 1] = cc[1]; col[k * 3 + 2] = cc[2]; }
+      k++;
+    }
+  }
+  const idx = [];
+  for (let i = 0; i < rings; i++) for (let j = 0; j < radial; j++) {
+    const a = i * (radial + 1) + j, b = a + radial + 1;
+    idx.push(a, b, a + 1, b, b + 1, a + 1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  if (col) g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setIndex(idx); g.computeVertexNormals();
+  const nr = g.attributes.normal.array;                  // weld the seam normals
+  for (let i = 0; i <= rings; i++) {
+    const p = i * (radial + 1) * 3, q = (i * (radial + 1) + radial) * 3;
+    for (let c = 0; c < 3; c++) { const m = (nr[p + c] + nr[q + c]) / 2; nr[p + c] = nr[q + c] = m; }
+  }
+  return g;
+}
+
+// Spine from a dense polyline, parameterised by arc length (extends straight past both ends).
+function polylineFn(pts) {
+  const acc = [0]; for (let i = 1; i < pts.length; i++) acc.push(acc[i - 1] + pts[i].distanceTo(pts[i - 1]));
+  const L = acc[acc.length - 1];
+  const fn = (d, out) => {
+    if (d <= 0) return out.copy(pts[0]).addScaledVector(_dir(pts[1], pts[0]), d);
+    if (d >= L) return out.copy(pts[pts.length - 1]).addScaledVector(_dir(pts[pts.length - 1], pts[pts.length - 2]), d - L);
+    let lo = 0, hi = acc.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (acc[m] <= d) lo = m; else hi = m; }
+    return out.lerpVectors(pts[lo], pts[hi], (d - acc[lo]) / (acc[hi] - acc[lo]));
+  };
+  fn.len = L; return fn;
+}
+const _dtmp = new V3();
+function _dir(a, b) { return _dtmp.subVectors(a, b).normalize(); }
+
+// ---------------------------------------------------------------- materials
+const muc = makeMucosa();
+function tissueMat(opts = {}) {
+  const map = muc.map.clone(), bump = muc.bump.clone();
+  const rep = opts.repeat || [2, 2];
+  map.repeat.set(...rep); bump.repeat.set(...rep); map.needsUpdate = bump.needsUpdate = true;
+  return new THREE.MeshPhysicalMaterial({
+    map, bumpMap: bump, bumpScale: opts.bump ?? 2.2, color: opts.tint ?? 0xffffff,
+    roughness: opts.rough ?? 0.42, clearcoat: 1, clearcoatRoughness: opts.cc ?? 0.1,
+    sheen: 0.5, sheenRoughness: 0.45, sheenColor: new THREE.Color(0xff8e80),
+    vertexColors: !!opts.vcol, side: THREE.DoubleSide,
+  });
+}
+const markTex = makeTubeMarkings();
+const M = {
+  tube: new THREE.MeshPhysicalMaterial({ color: 0xf4fbff, transmission: 1, roughness: 0.05, thickness: 0.12, ior: 1.46, attenuationColor: new THREE.Color(0xe4f3f3), attenuationDistance: 3, side: THREE.DoubleSide }),
+  cuff: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.12, transparent: true, opacity: 0.3, clearcoat: 1, clearcoatRoughness: 0.08, depthWrite: false, side: THREE.DoubleSide }),
+  marks: new THREE.MeshStandardMaterial({ map: markTex, transparent: true, roughness: 0.35, depthWrite: false, side: THREE.DoubleSide }),
+  connector: new THREE.MeshPhysicalMaterial({ color: 0xf1f1ec, roughness: 0.32, transmission: 0.45, thickness: 1.2 }),
+  stylet: new THREE.MeshStandardMaterial({ color: 0xd0d4d8, metalness: 1, roughness: 0.26 }),
+  styletGrip: new THREE.MeshPhysicalMaterial({ color: 0x2f6fc9, roughness: 0.38, clearcoat: 0.6 }),
+  pilotLine: new THREE.MeshPhysicalMaterial({ color: 0xf6f6f2, roughness: 0.3, transmission: 0.6, thickness: 0.2 }),
+  balloon: new THREE.MeshPhysicalMaterial({ color: 0xd6ecff, roughness: 0.12, transmission: 0.9, thickness: 0.3, ior: 1.42 }),
+  valve: new THREE.MeshPhysicalMaterial({ color: 0xeeeeea, roughness: 0.4 }),
+  valveCap: new THREE.MeshPhysicalMaterial({ color: 0x2f6fc9, roughness: 0.4, clearcoat: 0.5 }),
+  handle: new THREE.MeshPhysicalMaterial({ color: 0x2a2f33, roughness: 0.52, clearcoat: 0.45, clearcoatRoughness: 0.35 }),
+  grip: new THREE.MeshPhysicalMaterial({ color: 0x1e2224, roughness: 0.85, bumpMap: makeGripBump(), bumpScale: 3 }),
+  blade: new THREE.MeshPhysicalMaterial({ color: 0xd9e9ef, roughness: 0.1, transmission: 0.88, thickness: 0.9, ior: 1.49, side: THREE.DoubleSide }),
+  camera: new THREE.MeshPhysicalMaterial({ color: 0x0c0e10, roughness: 0.2, clearcoat: 1 }),
+  lens: new THREE.MeshPhysicalMaterial({ color: 0x0a1624, roughness: 0.02, metalness: 0.2, clearcoat: 1 }),
+  led: new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2dc, emissiveIntensity: 3 }),
+  tubeScope: new THREE.MeshPhysicalMaterial({ color: 0xf2f7f8, roughness: 0.06, transparent: true, opacity: 0.13, clearcoat: 1, clearcoatRoughness: 0.05, depthWrite: false, side: THREE.DoubleSide }),
+  cuffScope: new THREE.MeshPhysicalMaterial({ color: 0xf6fbff, roughness: 0.2, transparent: true, opacity: 0.22, clearcoat: 1, depthWrite: false, side: THREE.DoubleSide }),
+  glass: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.04, transparent: true, opacity: 0.12, clearcoat: 1, depthWrite: false }),
+};
+
+// ---------------------------------------------------------------- shared state
+const S = { mode: 'instruments', cuff: 0, stylet: 0, depth: 0.3, lift: 0.75, adv: 6, roll: 0 };
+let tubeDirty = true, airwayDirty = true;
+
+// ---------------------------------------------------------------- ETT builder (used in both scenes)
+const R_OUT = 0.51, R_IN = 0.375, TUBE_LEN = 32;
+function ettBevel(d, a) { return Math.max(d, 0.5 * (1 + Math.cos(a + Math.PI / 2)) * 0.95); }  // 45° bevel, opening faces left
+function buildETT({ fn, ref, d1, roll, cuffMax, radial = 40, rings = 110, tubeMat = M.tube, cuffMat = M.cuff }) {
+  const grp = new THREE.Group();
+  const base = { fn, ref, d0: 0, d1, rings, radial, roll, power: 1.6, bevel: ettBevel };
+  grp.add(new THREE.Mesh(loft({ ...base, radius: () => R_OUT }), tubeMat));
+  if (tubeMat === M.tube) grp.add(new THREE.Mesh(loft({ ...base, radius: () => R_IN }), tubeMat));
+  const marks = new THREE.Mesh(loft({ ...base, radius: () => R_OUT + 0.004, uv: (f, a, d) => 1 - d / 34 }), M.marks);
+  marks.renderOrder = 2; grp.add(marks);
+  const inflate = (S.cuff / 30) * cuffMax;
+  const cuffMesh = new THREE.Mesh(loft({ fn, ref, d0: 0.95, d1: 5.0, rings: 40, radial, roll,
+    radius: (f, a) => R_OUT + 0.012 + (0.035 + inflate) * Math.pow(Math.sin(Math.PI * f), 0.62) + (1 - S.cuff / 30) * 0.018 * Math.sin(a * 9 + f * 4) * Math.sin(Math.PI * f) }), cuffMat);
+  cuffMesh.renderOrder = 3; grp.add(cuffMesh);
+  return grp;
+}
+function buildStylet(fn, ref, d0, d1) {
+  return new THREE.Mesh(loft({ fn, ref, d0, d1, rings: 90, radial: 14, radius: (f) => 0.17 * (f < 0.01 ? 0.7 : 1) }), M.stylet);
+}
+function disposeGroup(g) { g.traverse((o) => { if (o.geometry) o.geometry.dispose(); }); }
+
+// ================================================================= SCENE 1: instruments on a turntable
+const inst = new THREE.Scene();
+inst.background = makeBackdrop();
+const pmrem = new THREE.PMREMGenerator(renderer);
+inst.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+inst.environmentIntensity = 0.95;
+const key = new THREE.DirectionalLight(0xfff4ea, 2.4);
+key.position.set(14, 30, 22); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); key.shadow.camera.left = key.shadow.camera.bottom = -26; key.shadow.camera.right = key.shadow.camera.top = 26; key.shadow.camera.far = 90; key.shadow.bias = -0.0004; key.shadow.radius = 6;
+inst.add(key);
+const rim = new THREE.DirectionalLight(0xbfe8ff, 1.2); rim.position.set(-20, 10, -18); inst.add(rim);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.ShadowMaterial({ opacity: 0.32 }));
+floor.rotation.x = -Math.PI / 2; floor.position.y = -9.2; floor.receiveShadow = true; inst.add(floor);
+
+const instCam = new THREE.PerspectiveCamera(32, 1, 0.5, 500);
+instCam.position.set(30, 16, 62);
+const controls = new OrbitControls(instCam, canvas);
+controls.target.set(-4, 6, 0); controls.enableDamping = true; controls.minDistance = 12; controls.maxDistance = 110;
+controls.autoRotate = true; controls.autoRotateSpeed = 0.7;
+let userMoved = false;
+controls.addEventListener('start', () => { controls.autoRotate = false; userMoved = true; });
+
+// --- ETT on the turntable: straight shaft up, stylet-shaped hockey-stick curve at the distal end.
+const ettRoot = new THREE.Group(); ettRoot.position.set(1.5, -2.2, 2.5); inst.add(ettRoot);
+let ettInst = null, styInst = null;
+function instSpine() {
+  const La = 9.5, theta = THREE.MathUtils.degToRad(lerp(68, 40, S.stylet / 8)), R = La / theta;
+  return (d, out) => {
+    if (d >= La) return out.set(0, d - La, 0);
+    const phi = (La - d) / R;
+    return out.set(R - R * Math.cos(phi), -R * Math.sin(phi), 0);
+  };
+}
+function rebuildInstTube() {
+  if (ettInst) { ettRoot.remove(ettInst); disposeGroup(ettInst); }
+  if (styInst) { ettRoot.remove(styInst); disposeGroup(styInst); }
+  const fn = instSpine(), ref = new V3(0, 0, 1);
+  ettInst = buildETT({ fn, ref, d1: TUBE_LEN, roll: 0, cuffMax: 0.85 });
+  ettInst.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+  ettRoot.add(ettInst);
+  const sFn = instSpine();
+  styInst = new THREE.Group();
+  const sd0 = 1.2 + S.stylet, sd1 = TUBE_LEN + 4.5 + S.stylet;
+  const rod = buildStylet(sFn, ref, sd0, sd1); rod.castShadow = true; styInst.add(rod);
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.5, 2.6, 28), M.styletGrip);
+  sFn(sd1 + 1.1, grip.position); grip.castShadow = true; styInst.add(grip);
+  ettRoot.add(styInst);
+}
+// Connector, pilot line, pilot balloon — static parts.
+(function buildTubeHardware() {
+  const top = TUBE_LEN - 9.5;
+  const conn = new THREE.Group(); conn.position.set(0, top, 0);
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.62, 2.4, 40, 1, true), M.connector); body.position.y = 1.0;
+  const flange = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.25, 0.28, 48), M.connector); flange.position.y = 0.55;
+  const wings = new THREE.Mesh(new RoundedBoxGeometry(3.0, 0.22, 1.1, 2, 0.1), M.connector); wings.position.y = 0.55;
+  const spigot = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 1.3, 40, 1, true), M.connector); spigot.position.y = -0.5;
+  [body, flange, wings, spigot].forEach((m) => { m.castShadow = true; conn.add(m); });
+  ettRoot.add(conn);
+  const start = new V3(-R_OUT * 0.9, top - 5, 0.15);
+  const line = new THREE.CatmullRomCurve3([start, new V3(-1.4, top - 6.2, 0.5), new V3(-2.9, top - 9.0, 1.3), new V3(-3.6, top - 12.2, 1.8), new V3(-3.7, top - 13.6, 1.9)]);
+  const pl = new THREE.Mesh(new THREE.TubeGeometry(line, 80, 0.085, 10), M.pilotLine); pl.castShadow = true; ettRoot.add(pl);
+  const balloon = new THREE.Mesh(new THREE.SphereGeometry(1, 40, 28), M.balloon);
+  balloon.position.set(-3.7, top - 14.9, 1.9); balloon.name = 'balloon'; balloon.castShadow = true; ettRoot.add(balloon);
+  const valve = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.3, 1.5, 24), M.valve); valve.position.set(-3.7, top - 16.9, 1.9); ettRoot.add(valve);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.5, 24), M.valveCap); cap.position.set(-3.7, top - 17.8, 1.9); ettRoot.add(cap);
+})();
+
+// --- Video laryngoscope: handle, grip, screen showing the live blade-camera feed, hyperangulated blade.
+const vl = new THREE.Group(); vl.position.set(-11.5, -1.5, -2); vl.rotation.y = -0.7; inst.add(vl);
+const scopeRT = new THREE.WebGLRenderTarget(800, 600, { type: THREE.HalfFloatType, samples: 4 });
+(function buildVL() {
+  const handle = new THREE.Mesh(new RoundedBoxGeometry(3.3, 13, 2.8, 5, 1.0), M.handle); handle.position.y = 10; vl.add(handle);
+  const grip = new THREE.Mesh(new RoundedBoxGeometry(3.45, 7.5, 2.95, 5, 1.0), M.grip); grip.position.y = 9.0; vl.add(grip);
+  const housing = new THREE.Group(); housing.position.set(0, 18.4, 0.2); housing.rotation.set(-0.3, 0.45, 0, 'YXZ'); vl.add(housing);
+  housing.add(new THREE.Mesh(new RoundedBoxGeometry(7.6, 5.8, 1.3, 5, 0.5), M.handle));
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 4.95), new THREE.MeshBasicMaterial({ map: scopeRT.texture }));
+  screen.position.z = 0.66; housing.add(screen);
+  const glass = new THREE.Mesh(new THREE.PlaneGeometry(7.0, 5.3), M.glass); glass.position.z = 0.67; housing.add(glass);
+  const btn = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.2, 24), M.camera); btn.rotation.x = Math.PI / 2; btn.position.set(0, -3.4, 1.45); vl.add(btn); btn.position.y = 15.8;
+  // Hyperangulated blade: integrate a heading that bends ~60° over the distal half.
+  const pts = []; let p = new V3(0, 0, 0), h = THREE.MathUtils.degToRad(-12);
+  for (let d = 0; d <= 11; d += 0.05) {
+    pts.push(p.clone());
+    const hd = THREE.MathUtils.degToRad(-12) - THREE.MathUtils.degToRad(62) * smooth(2.2, 7.0, d);
+    h = hd; p = p.clone().add(new V3(Math.cos(h) * 0.05, Math.sin(h) * 0.05, 0));
+  }
+  const bfn = polylineFn(pts), ref = new V3(0, 0, 1), L = bfn.len;
+  const blade = new THREE.Mesh(loft({ fn: bfn, ref, d0: -0.6, d1: L, rings: 120, radial: 40,
+    radius: (f, a) => {
+      const hw = lerp(1.25, 0.78, f), ht = lerp(0.42, 0.2, f), pw = 4;
+      let r = Math.pow(Math.pow(Math.abs(Math.cos(a) / hw), pw) + Math.pow(Math.abs(Math.sin(a) / ht), pw), -1 / pw);
+      if (f > 0.955) r *= Math.sqrt(Math.max(0.02, 1 - ((f - 0.955) / 0.045) ** 2));
+      return r;
+    } }), M.blade);
+  const bladeGrp = new THREE.Group(); bladeGrp.position.set(0, 3.6, -0.6); bladeGrp.rotation.y = Math.PI / 2; bladeGrp.add(blade); vl.add(bladeGrp);
+  // Camera module under the blade tip, looking along the blade.
+  const dCam = L - 1.6; frameAt(bfn, dCam, ref);
+  const cam = new THREE.Group(); cam.name = 'bladeCam'; cam.position.copy(_P).addScaledVector(_B, 0.34);
+  cam.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(_N.clone(), _B.clone(), _T.clone()));
+  const housingCam = new THREE.Mesh(new RoundedBoxGeometry(0.9, 0.45, 1.3, 3, 0.18), M.camera); cam.add(housingCam);
+  const lens = new THREE.Mesh(new THREE.CircleGeometry(0.16, 24), M.lens); lens.position.z = 0.66; cam.add(lens);
+  const led = new THREE.Mesh(new THREE.CircleGeometry(0.07, 16), M.led); led.position.set(0.3, 0, 0.66); cam.add(led);
+  const led2 = led.clone(); led2.position.x = -0.3; cam.add(led2);
+  bladeGrp.add(cam);
+  vl.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+})();
+
+// ================================================================= SCENE 2: the airway, seen by the blade camera
+const airway = new THREE.Scene();
+airway.background = new THREE.Color(0x000000);
+airway.fog = new THREE.FogExp2(0x000000, 0.045);
+airway.add(new THREE.AmbientLight(0xffe8e0, 0.05));
+const scopeCam = new THREE.PerspectiveCamera(74, 4 / 3, 0.05, 80);
+airway.add(scopeCam);
+const ledLight = new THREE.SpotLight(0xfff0e2, 60, 0, 0.95, 0.75, 2);
+ledLight.position.set(0, -0.05, 0); scopeCam.add(ledLight); scopeCam.add(ledLight.target); ledLight.target.position.set(0, -0.1, -1);
+const fillLight = new THREE.PointLight(0xffe2d4, 4, 0, 2); scopeCam.add(fillLight);
+
+const MAT = {
+  wall: tissueMat({ repeat: [3, 2] }),
+  floor: tissueMat({ repeat: [1, 1], tint: 0xe7c7c2 }),
+  larynx: tissueMat({ repeat: [2, 2], tint: 0xffe4df, rough: 0.4, bump: 0.8 }),
+  trachea: tissueMat({ repeat: [6, 2], vcol: true, rough: 0.4, bump: 0.8 }),
+  cords: new THREE.MeshPhysicalMaterial({ color: 0xefe6da, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.08, sheen: 0.4, sheenColor: new THREE.Color(0xffffff) }),
+  epi: tissueMat({ repeat: [1, 1], tint: 0xffd9d2, rough: 0.38 }),
+  eso: tissueMat({ repeat: [2, 1], tint: 0xb97c7c }),
+};
+
+// Pharynx: an irregular lofted tube, whose anterior wall (tongue base) is pushed forward as the blade lifts.
+const phN = tileNoise(41, 30, 7, 1.0), PH_R = 64, PH_A = 72;
+const phDisp = new Float32Array((PH_R + 1) * (PH_A + 1));
+for (let i = 0; i <= PH_R; i++) for (let j = 0; j <= PH_A; j++) phDisp[i * (PH_A + 1) + j] = phN(j / PH_A, (i / PH_R) * 0.9) * 0.16;
+const phFn = (d, out) => out.set(0, -0.3 - 0.03 * d, 2.5 - d);
+let pharynx = null;
+function rebuildPharynx() {
+  if (pharynx) { airway.remove(pharynx); pharynx.geometry.dispose(); }
+  const lift = S.lift;
+  pharynx = new THREE.Mesh(loft({ fn: phFn, d0: 0, d1: 11.1, rings: PH_R, radial: PH_A,
+    radius: (f, a, d) => {
+      const z = 2.5 - d, ant = Math.max(0, Math.cos(a));
+      return ellipseR(a, 2.35, 1.85) + (0.45 + lift * 0.85) * ant * ant * Math.exp(-(((z + 3.6) / 2.2) ** 2));
+    },
+    disp: (i, j) => phDisp[i * (PH_A + 1) + j] }), MAT.wall);
+  airway.add(pharynx);
+}
+
+// Floor of the hypopharynx with openings for the trachea and the esophagus.
+(function buildFloor() {
+  const sh = new THREE.Shape(); sh.absellipse(0, -0.63, 2.9, 2.35, 0, TAU, false);
+  const tr = new THREE.Path(); tr.absellipse(0, -0.1, 1.02, 0.9, 0, TAU, true); sh.holes.push(tr);
+  const es = new THREE.Path(); es.absellipse(0, -1.62, 0.85, 0.26, 0, TAU, true); sh.holes.push(es);
+  const g = new THREE.ShapeGeometry(sh, 48);
+  const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 0.25, uv.getY(i) * 0.25);
+  const m = new THREE.Mesh(g, MAT.floor); m.position.z = -8.3; airway.add(m);
+  airway.add(new THREE.Mesh(loft({ fn: (d, o) => o.set(0, -1.62, -8.2 - d), d0: 0, d1: 6, rings: 20, radial: 40, radius: (f, a) => ellipseR(a, 0.26, 0.85) }), MAT.eso));
+})();
+
+// Larynx: vestibule funnel, aryepiglottic folds, arytenoids, false and true cords, trachea with rings.
+const GLOTTIS_Z = -7.05;
+const A_COMM = new V3(0, 0.72, GLOTTIS_Z - 0.03), VP_L = new V3(-0.44, -0.6, GLOTTIS_Z + 0.08), VP_R = new V3(0.44, -0.6, GLOTTIS_Z + 0.08);
+(function buildLarynx() {
+  const vFn = (d, o) => o.set(0, 0.05, -5.7 - d);
+  const axial = (f, a) => -(1 - f) * 0.55 * Math.cos(a);
+  const vRad = (f, a) => ellipseR(a, lerp(1.28, 1.0, f), lerp(1.18, 0.9, f));
+  airway.add(new THREE.Mesh(loft({ fn: vFn, d0: 0, d1: 1.5, rings: 22, radial: 64, axial, radius: vRad }), MAT.larynx));
+  const rimPts = [];
+  for (let j = 0; j < 48; j++) { const a = (j / 48) * TAU; frameAt(vFn, axial(0, a), new V3(0, 1, 0)); const r = vRad(0, a); rimPts.push(_P.clone().addScaledVector(_N, Math.cos(a) * r).addScaledVector(_B, Math.sin(a) * r)); }
+  const fold = []; for (let j = 6; j <= 42; j++) fold.push(rimPts[j]);
+  const foldFn = polylineFn(new THREE.CatmullRomCurve3(fold).getSpacedPoints(200));
+  airway.add(new THREE.Mesh(loft({ fn: foldFn, d0: 0, d1: foldFn.len, rings: 140, radial: 14, ref: new V3(0, 0, 1), radius: (f) => 0.16 * Math.pow(Math.sin(Math.PI * f), 0.45) }), MAT.larynx));
+  for (const side of [-1, 1]) {
+    const a = Math.PI + side * 0.62, i = Math.round((a / TAU) * 48) % 48, p = rimPts[i];
+    const ary = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 20), MAT.larynx);
+    ary.scale.set(0.36, 0.3, 0.46); ary.position.copy(p).add(new V3(-side * 0.05, 0.08, 0.05)); airway.add(ary);
+    const corn = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), MAT.larynx);
+    corn.scale.set(0.17, 0.16, 0.2); corn.position.copy(p).add(new V3(-side * 0.13, 0.12, 0.33)); airway.add(corn);
+    const cune = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), MAT.larynx);
+    const q = rimPts[(i + (side > 0 ? -6 : 6) + 48) % 48];
+    cune.scale.set(0.16, 0.15, 0.2); cune.position.copy(q).add(new V3(0, 0, 0.12)); airway.add(cune);
+  }
+  // Glottic shelf with the rima glottidis cut out.
+  const sh = new THREE.Shape(); sh.absellipse(0, 0.05, 1.05, 0.93, 0, TAU, false);
+  const hole = new THREE.Path();
+  hole.moveTo(0, 0.7); hole.lineTo(-0.4, -0.52); hole.quadraticCurveTo(-0.34, -0.86, 0, -0.9); hole.quadraticCurveTo(0.34, -0.86, 0.4, -0.52); hole.lineTo(0, 0.7);
+  sh.holes.push(hole);
+  const shelf = new THREE.Mesh(new THREE.ShapeGeometry(sh, 40), MAT.larynx); shelf.position.z = GLOTTIS_Z; airway.add(shelf);
+  // True cords: pearly bands along the rima; false cords: pink folds above and lateral.
+  const band = (p0, p1, out, rw, rt, mat) => {
+    const dir = new V3().subVectors(p1, p0), len = dir.length(); dir.normalize();
+    const lat = new V3(Math.sign(p1.x) * 1, 0, 0).addScaledVector(dir, -dir.x * Math.sign(p1.x)).normalize();
+    const fn = (d, o) => o.copy(p0).addScaledVector(dir, d).addScaledVector(lat, out);
+    airway.add(new THREE.Mesh(loft({ fn, d0: 0, d1: len, rings: 26, radial: 24, ref: new V3(0, 0, 1),
+      radius: (f, a) => ellipseR(a, rt, rw) * Math.pow(Math.sin(Math.PI * clamp(f * 0.96 + 0.02, 0, 1)), 0.3) }), mat));
+  };
+  band(A_COMM, VP_L, 0.1, 0.15, 0.09, MAT.cords); band(A_COMM, VP_R, 0.1, 0.15, 0.09, MAT.cords);
+  band(new V3(0, 0.86, -6.72), new V3(-0.7, -0.45, -6.6), 0.12, 0.22, 0.17, MAT.larynx);
+  band(new V3(0, 0.86, -6.72), new V3(0.7, -0.45, -6.6), 0.12, 0.22, 0.17, MAT.larynx);
+  // Trachea: cartilage rings anteriorly and laterally, flat membranous wall posteriorly.
+  const tFn = (d, o) => o.set(0, -0.012 * d, -7.2 - d);
+  const ringW = (a) => smooth(-0.75, -0.2, Math.cos(a));
+  airway.add(new THREE.Mesh(loft({ fn: tFn, d0: 0, d1: 17, rings: 340, radial: 48,
+    radius: (f, a, d) => ellipseR(a, 0.98, 0.84) * (1 + 0.045 * Math.pow(Math.max(0, Math.sin((d * TAU) / 0.42)), 1.5) * ringW(a)),
+    uv: (f) => f * 3,
+    color: (f, a, d) => { const r = Math.pow(Math.max(0, Math.sin((d * TAU) / 0.42)), 2) * ringW(a); return [0.92 + 0.3 * r, 0.8 + 0.3 * r, 0.8 + 0.28 * r]; } }), MAT.trachea));
+})();
+
+// Epiglottis: a curled leaf on a hinge. Lift (and deep blade placement) swings it up out of the view.
+const epi = new THREE.Group(); epi.position.set(0, 1.3, -5.3); airway.add(epi);
+(function buildEpiglottis() {
+  const NU = 28, NV = 30, L = 1.8, pos = [], uvs = [], idx = [];
+  const P = (u, v) => { const w = (0.62 + 0.38 * Math.sin(Math.min(1, v * 1.4) * Math.PI * 0.5)) * Math.sqrt(Math.max(0, 1 - v ** 8)); return new V3(u * w * 0.9, 0.45 * v * v - 0.15 * u * u * (0.35 + 0.65 * v), v * L); };
+  for (let i = 0; i <= NV; i++) for (let j = 0; j <= NU; j++) { const u = (j / NU) * 2 - 1, v = i / NV; const p = P(u, v); pos.push(p.x, p.y, p.z); uvs.push(j / NU, v); }
+  for (let i = 0; i < NV; i++) for (let j = 0; j < NU; j++) { const a = i * (NU + 1) + j, b = a + NU + 1; idx.push(a, b, a + 1, b, b + 1, a + 1); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); g.setIndex(idx); g.computeVertexNormals();
+  const leaf = new THREE.Mesh(g, MAT.epi); leaf.name = 'epi'; epi.add(leaf);
+  const edge = []; for (let i = 0; i <= 24; i++) edge.push(P(-1, i / 24)); for (let i = 24; i >= 0; i--) edge.push(P(1, i / 24));
+  const rimM = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(edge), 120, 0.05, 10), MAT.epi); rimM.name = 'epi'; epi.add(rimM);
+})();
+
+
+// ETT path through the airway: enters from the right corner of the mouth, through the cords, down the trachea.
+const ettPath = new THREE.CatmullRomCurve3([
+  new V3(3.4, -1.1, 4.5), new V3(2.9, -1.0, 1.5), new V3(2.0, -0.75, -1.5), new V3(1.05, -0.4, -4.1),
+  new V3(0.3, -0.08, -6.1), new V3(0.02, 0.02, -7.3), new V3(0, -0.08, -9.5), new V3(0, -0.2, -14), new V3(0, -0.3, -24)], false, 'centripetal');
+const PATH_L = ettPath.getLength();
+const sAtZ = (z) => { for (let i = 0; i <= 2000; i++) { const t = i / 2000; if (ettPath.getPointAt(t).z <= z) return t * PATH_L; } return PATH_L; };
+const S_GLOTTIS = sAtZ(GLOTTIS_Z), S_TEETH_REF = sAtZ(-11.5), S_START = 5.2;
+let ettScope = null, styScope = null, hung = false;
+function rebuildScopeTube() {
+  if (ettScope) { airway.remove(ettScope); disposeGroup(ettScope); }
+  if (styScope) { airway.remove(styScope); disposeGroup(styScope); }
+  const pass = S.stylet >= 4 || S.roll >= 60;
+  let s = S_START + S.adv; hung = false;
+  if (!pass && s > S_GLOTTIS + 0.9) { s = S_GLOTTIS + 0.9; hung = true; }
+  S.tipS = s;
+  const tmp = new V3();
+  const fn = (d, out) => {
+    const q = s - d;
+    if (q >= 0) out.copy(ettPath.getPointAt(Math.min(1, q / PATH_L)));
+    else { out.copy(ettPath.getPointAt(0)); tmp.copy(ettPath.getTangentAt(0)); out.addScaledVector(tmp, q); }
+    if (hung) out.y += 0.42 * Math.max(0, 1 - d / 2.6) ** 2;   // tip riding up against the anterior tracheal wall
+    return out;
+  };
+  const ref = new V3(0, 1, 0), vis = Math.min(s + 1, 16);
+  ettScope = buildETT({ fn, ref, d1: vis, roll: THREE.MathUtils.degToRad(S.roll), cuffMax: 0.42, rings: 90, radial: 32, tubeMat: M.tubeScope, cuffMat: M.cuffScope });
+  ettScope.children[1].renderOrder = 3;
+  airway.add(ettScope);
+  styScope = buildStylet(fn, ref, 1.2 + S.stylet, Math.max(1.3 + S.stylet, vis));
+  airway.add(styScope);
+}
+
+// ================================================================= screen pass for the full-size scope view
+const screenScene = new THREE.Scene(); screenScene.background = new THREE.Color(0x0b0f11);
+const orthoCam = new THREE.OrthographicCamera(0, 1, 1, 0, -1, 1);
+const screenMat = new THREE.ShaderMaterial({
+  uniforms: { tMap: { value: scopeRT.texture }, uTime: { value: 0 }, uAspect: { value: 4 / 3 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tMap; uniform float uTime; uniform float uAspect; varying vec2 vUv;
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    void main(){
+      vec2 c = vUv - 0.5; float r2 = dot(c * vec2(uAspect, 1.0), c * vec2(uAspect, 1.0));
+      vec2 uv = 0.5 + c * (0.9 + 0.16 * r2);
+      vec3 col = vec3(texture2D(tMap, 0.5 + (uv - 0.5) * 1.004).r, texture2D(tMap, uv).g, texture2D(tMap, 0.5 + (uv - 0.5) * 0.996).b);
+      float vig = smoothstep(1.05, 0.25, length(c * vec2(uAspect, 1.0)) * 1.25);
+      col *= vig;
+      col += (hash(vUv * 900.0 + uTime) - 0.5) * 0.018;
+      vec2 q = abs(c) - vec2(0.5 - 0.035, 0.5 - 0.035 * uAspect);
+      float corner = length(max(q, 0.0)) / 0.035;
+      col *= 1.0 - smoothstep(0.9, 1.0, corner);
+      gl_FragColor = vec4(max(col, 0.0), 1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }`,
+});
+const screenQuad = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), screenMat); screenScene.add(screenQuad);
+
+// ================================================================= view math, coaching, readouts
+const ray = new THREE.Raycaster();
+const glottisSamples = [];
+for (let i = 0; i < 5; i++) for (let j = 0; j <= i; j++) {
+  const t = (i + 0.5) / 5, w = i === 0 ? 0.5 : j / i;
+  glottisSamples.push(new V3().copy(A_COMM).lerp(new V3().lerpVectors(VP_L, VP_R, w), t * 0.95));
+}
+function updateScopeCamera(time) {
+  const z = lerp(-0.3, -4.7, S.depth), y = lerp(0.45, 1.25, S.lift);
+  const tremor = 0.012;
+  scopeCam.position.set(Math.sin(time * 1.3) * tremor, y + Math.sin(time * 1.7 + 1) * tremor, z);
+  scopeCam.lookAt(0, lerp(-0.45, 0.15, S.lift) - S.depth * 0.25, -7.4);
+  const deep = smooth(0.62, 0.95, S.depth);
+  const theta = lerp(-1.0, 0.72, clamp(S.lift * 0.95 + deep * 0.5, 0, 1));
+  epi.rotation.x = -theta;
+}
+function viewMetrics() {
+  scopeCam.updateMatrixWorld(); epi.updateMatrixWorld(true);
+  const targets = epi.children.filter((o) => o.name === 'epi');
+  let seen = 0; const from = scopeCam.getWorldPosition(new V3());
+  for (const p of glottisSamples) {
+    const dir = new V3().subVectors(p, from), dist = dir.length(); dir.normalize();
+    ray.set(from, dir); ray.far = dist;
+    if (!ray.intersectObjects(targets, false).length) seen++;
+  }
+  const pr = (v) => v.clone().project(scopeCam);
+  const a = pr(A_COMM), l = pr(VP_L), r = pr(VP_R);
+  return { pogo: Math.round((seen / glottisSamples.length) * 100), height: Math.abs(a.y - (l.y + r.y) / 2) / 2, centerY: (a.y + (l.y + r.y) / 2) / 2 };
+}
+
+const coach = $('coach'), coachText = $('coach-text'), chips = $('chips'), hint = $('hint');
+function setCoach(text, tone) { coach.hidden = !text; coachText.textContent = text || ''; coach.dataset.tone = tone || ''; }
+function chip(label, value) { return `<span class="chip"><b>${label}</b>${value}</span>`; }
+let lastMetrics = { pogo: 0, height: 0, centerY: 0 };
+function refreshUI() {
+  const cuffP = Math.round(S.cuff);
+  $('v-cuff-i').textContent = $('v-cuff-s').textContent = `${cuffP} cmH₂O`;
+  $('v-sty-i').textContent = $('v-sty-s').textContent = `${S.stylet.toFixed(1)} cm`;
+  $('v-depth').textContent = S.depth < 0.25 ? 'shallow' : S.depth > 0.62 ? 'deep' : 'in vallecula';
+  $('v-lift').textContent = `${Math.round(S.lift * 100)}%`;
+  $('v-roll').textContent = `${S.roll > 0 ? '+' : ''}${Math.round(S.roll)}° ${S.roll > 5 ? 'CW' : S.roll < -5 ? 'CCW' : ''}`;
+  if (S.mode === 'instruments') {
+    const theta = Math.round(lerp(68, 40, S.stylet / 8));
+    chips.innerHTML = chip('ETT', '7.5 mm ID') + chip('Curve', `${theta}° hockey stick`) + chip('Cuff', `${cuffP} cmH₂O`);
+    setCoach(S.stylet > 0 ? 'Pulling the stylet back lets the distal tube relax and straighten. That is the move that frees a tube caught on the anterior trachea.' : 'Drag to turn the models, pinch or scroll to zoom. The handle screen shows the live feed from the blade camera.', '');
+    hint.innerHTML = '<kbd>drag</kbd> rotate · <kbd>scroll</kbd>/<kbd>pinch</kbd> zoom · <kbd>right-drag</kbd> pan';
+    return;
+  }
+  const m = lastMetrics, s = S.tipS ?? S_START;
+  const depthCm = Math.round(23 + (s - S_TEETH_REF));
+  const where = hung ? 'caught on anterior wall' : s < S_GLOTTIS - 0.4 ? 'above the cords' : s < S_GLOTTIS + 0.4 ? 'at the cords' : 'in the trachea';
+  $('v-adv').textContent = `${depthCm} cm`;
+  chips.innerHTML = chip('POGO', `${m.pogo}%`) + chip('Tip', where) + chip('At teeth', `${depthCm} cm`) + chip('Cuff', `${cuffP} cmH₂O`);
+  const inTrachea = !hung && s > S_GLOTTIS + 0.4;
+  if (hung) setCoach('Tube tip is caught on the anterior tracheal wall. Pull the stylet back 5–8 cm while advancing, or rotate the tube clockwise.', 'warn');
+  else if (m.pogo < 50) setCoach('Glottis is hidden behind the epiglottis. Seat the tip in the vallecula and lift.', 'warn');
+  else if (m.height > 0.3 && !inTrachea) setCoach('Too close. Back the blade out a little. A smaller view in the upper half of the screen makes the tube easier to pass.', 'warn');
+  else if (!inTrachea) setCoach('Good view. Advance the tube toward the cords, keeping the tip on screen.', '');
+  else if (depthCm > 24) setCoach(`Tube at ${depthCm} cm at the teeth. Too deep, risk of a right mainstem. Pull back to 21–23 cm.`, 'warn');
+  else if (S.cuff < 18) setCoach('Through the cords. Remove the stylet, set the depth at 21–23 cm and inflate the cuff.', '');
+  else setCoach(`Tube in the trachea at ${depthCm} cm, cuff up. Confirm with waveform capnography.`, 'good');
+  hint.innerHTML = '<kbd>↑</kbd><kbd>↓</kbd> lift · <kbd>W</kbd><kbd>S</kbd> blade depth · <kbd>scroll</kbd>/drag advance · <kbd>Q</kbd><kbd>E</kbd> rotate · <kbd>space</kbd> pull stylet · touch: drag to advance, twist two fingers to rotate';
+}
+
+// ================================================================= input
+const bind = (id, key, fmt = Number, flags = []) => {
+  $(id).addEventListener('input', (e) => { S[key] = fmt(e.target.value); flags.forEach((f) => f()); syncSliders(); refreshUI(); });
+};
+const markTube = () => { tubeDirty = true; }, markAir = () => { airwayDirty = true; };
+bind('cuff-i', 'cuff', Number, [markTube]); bind('cuff-s', 'cuff', Number, [markTube]);
+bind('sty-i', 'stylet', Number, [markTube]); bind('sty-s', 'stylet', Number, [markTube]);
+bind('depth', 'depth', Number, [markAir]); bind('lift', 'lift', Number, [markAir]);
+bind('adv', 'adv', Number, [markTube]); bind('roll', 'roll', Number, [markTube]);
+function syncSliders() {
+  $('cuff-i').value = $('cuff-s').value = S.cuff; $('sty-i').value = $('sty-s').value = S.stylet;
+  $('depth').value = S.depth; $('lift').value = S.lift; $('adv').value = S.adv; $('roll').value = S.roll;
+}
+function setMode(mode) {
+  S.mode = mode;
+  $('tab-inst').setAttribute('aria-selected', String(mode === 'instruments'));
+  $('tab-scope').setAttribute('aria-selected', String(mode === 'scope'));
+  $('panel-inst').hidden = mode !== 'instruments'; $('panel-scope').hidden = mode !== 'scope';
+  controls.enabled = mode === 'instruments';
+  canvas.setAttribute('aria-label', mode === 'scope' ? 'Video laryngoscope view of the airway' : '3D view of the endotracheal tube and video laryngoscope');
+  refreshUI(); layout();
+}
+$('tab-inst').addEventListener('click', () => setMode('instruments'));
+$('tab-scope').addEventListener('click', () => setMode('scope'));
+
+const nudge = (key, dv, lo, hi, flag) => { S[key] = clamp(S[key] + dv, lo, hi); flag(); syncSliders(); refreshUI(); };
+window.addEventListener('keydown', (e) => {
+  if (S.mode !== 'scope' || e.target.tagName === 'INPUT') return;
+  const k = e.key.toLowerCase();
+  if (k === 'arrowup') nudge('lift', 0.05, 0, 1, markAir);
+  else if (k === 'arrowdown') nudge('lift', -0.05, 0, 1, markAir);
+  else if (k === 'w') nudge('depth', 0.04, 0, 1, markAir);
+  else if (k === 's') nudge('depth', -0.04, 0, 1, markAir);
+  else if (k === 'q') nudge('roll', -10, -90, 120, markTube);
+  else if (k === 'e') nudge('roll', 10, -90, 120, markTube);
+  else if (k === ' ') { S.stylet = S.stylet >= 4 ? 0 : 6; markTube(); syncSliders(); refreshUI(); }
+  else return;
+  e.preventDefault();
+});
+canvas.addEventListener('wheel', (e) => { if (S.mode !== 'scope') return; e.preventDefault(); nudge('adv', -e.deltaY * 0.01, 0, 20, markTube); }, { passive: false });
+const pointers = new Map(); let twist = null;
+canvas.addEventListener('pointerdown', (e) => { if (S.mode !== 'scope') return; canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); twist = null; });
+canvas.addEventListener('pointermove', (e) => {
+  if (S.mode !== 'scope' || !pointers.has(e.pointerId)) return;
+  const prev = pointers.get(e.pointerId); const cur = { x: e.clientX, y: e.clientY }; pointers.set(e.pointerId, cur);
+  if (pointers.size === 1) nudge('adv', -(cur.y - prev.y) * 0.035, 0, 20, markTube);
+  else if (pointers.size === 2) {
+    const [p, q] = [...pointers.values()]; const ang = Math.atan2(q.y - p.y, q.x - p.x);
+    if (twist !== null) { let dA = ang - twist; if (dA > Math.PI) dA -= TAU; if (dA < -Math.PI) dA += TAU; nudge('roll', THREE.MathUtils.radToDeg(dA), -90, 120, markTube); }
+    twist = ang;
+  }
+});
+const lift_ = (e) => { pointers.delete(e.pointerId); twist = null; };
+canvas.addEventListener('pointerup', lift_); canvas.addEventListener('pointercancel', lift_);
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+
+// Camera presets on the turntable.
+let camAnim = null;
+function goView(which) {
+  ['full', 'tip', 'blade'].forEach((k) => $('view-' + k).setAttribute('aria-pressed', String(k === which)));
+  controls.autoRotate = which === 'full' && !userMoved;
+  inst.updateMatrixWorld(true);
+  let target, dir, dist;
+  if (which === 'tip') { target = ettRoot.localToWorld(instSpine()(2.6, new V3())); dir = new V3(0.35, 0.3, 1); dist = 13; }
+  else if (which === 'blade') { target = inst.getObjectByName('bladeCam').getWorldPosition(new V3()).add(new V3(0, 1.5, 0)); dir = new V3(1, -0.1, 0.45).applyQuaternion(vl.quaternion); dist = 15; }
+  else { target = new V3(-4, 6, 0); dir = new V3(0.45, 0.25, 1); dist = fitDist(); }
+  if (which !== 'full' && W < 600) dist *= 1.9;
+  camAnim = { t: 0, fromT: controls.target.clone(), fromP: instCam.position.clone(), toT: target, toP: target.clone().addScaledVector(dir.normalize(), dist) };
+}
+['full', 'tip', 'blade'].forEach((k) => $('view-' + k).addEventListener('click', () => goView(k)));
+
+// ================================================================= layout + loop
+let W = 1, H = 1, fitFrac = 1;
+function fitDist() {
+  const v = THREE.MathUtils.degToRad(instCam.fov), vEff = 2 * Math.atan(Math.tan(v / 2) * fitFrac);
+  const hEff = 2 * Math.atan(Math.tan(v / 2) * (W / H));
+  return 18 / Math.sin(Math.min(vEff, hEff) / 2);
+}
+function layout() {
+  const rect = $('app').getBoundingClientRect(); W = Math.max(1, rect.width); H = Math.max(1, rect.height);
+  renderer.setSize(W, H, false);
+  const barH = document.querySelector('.bar').getBoundingClientRect().height;
+  const dockH = $('dock').getBoundingClientRect().height;
+  instCam.aspect = W / H;
+  instCam.setViewOffset(W, H, 0, (dockH - barH) / 2, W, H);
+  instCam.fov = 32;
+  instCam.updateProjectionMatrix();
+  fitFrac = Math.max(0.3, (H - barH - dockH) / H);
+  if (!userMoved && !camAnim) {
+    const dir = new V3().subVectors(instCam.position, controls.target).normalize();
+    instCam.position.copy(controls.target).addScaledVector(dir, fitDist());
+  }
+  const freeH = Math.max(80, H - barH - dockH - 12), freeW = W - 24;
+  let qw = freeW, qh = qw * 0.75; if (qh > freeH) { qh = freeH; qw = qh / 0.75; }
+  orthoCam.right = W; orthoCam.top = H; orthoCam.updateProjectionMatrix();
+  screenQuad.scale.set(qw, qh, 1); screenQuad.position.set(W / 2, dockH + 6 + freeH / 2, 0);
+}
+new ResizeObserver(layout).observe($('app'));
+new ResizeObserver(layout).observe($('dock'));
+
+const clock = new THREE.Clock();
+let first = true, frameCount = 0;
+function frame() {
+  const t = clock.getElapsedTime();
+  if (airwayDirty) { rebuildPharynx(); airwayDirty = false; }
+  if (tubeDirty) { rebuildInstTube(); rebuildScopeTube(); tubeDirty = false; const b = ettRoot.getObjectByName('balloon'); const k = 0.55 + 0.55 * (S.cuff / 30); b.scale.set(k * 0.9, k * 1.5, k * 0.9); }
+  updateScopeCamera(t);
+  if (S.mode === 'scope') { lastMetrics = viewMetrics(); if (frameCount++ % 6 === 0) refreshUI(); }
+  renderer.setRenderTarget(scopeRT); renderer.render(airway, scopeCam); renderer.setRenderTarget(null);
+  if (S.mode === 'instruments') {
+    if (camAnim) {
+      camAnim.t = Math.min(1, camAnim.t + 0.035); const k = smooth(0, 1, camAnim.t);
+      controls.target.lerpVectors(camAnim.fromT, camAnim.toT, k); instCam.position.lerpVectors(camAnim.fromP, camAnim.toP, k);
+      if (camAnim.t >= 1) camAnim = null;
+    }
+    controls.update(); renderer.render(inst, instCam);
+  }
+  else { screenMat.uniforms.uTime.value = t; renderer.render(screenScene, orthoCam); }
+  if (first) { first = false; $('status').hidden = true; }
+  requestAnimationFrame(frame);
+}
+layout(); syncSliders(); refreshUI();
+window.__airway = { S, setMode, markTube, markAir, syncSliders, refreshUI, goView, jump: () => { if (camAnim) { camAnim.t = 0.999; } } };
+requestAnimationFrame(frame);
+</script>
+<script>
+  window.addEventListener('error', (e) => { const s = document.getElementById('status'); if (s) { s.hidden = false; s.textContent = '3D view failed to load: ' + (e.message || 'unknown error'); } });
+</script>
