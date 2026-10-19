@@ -201,22 +201,30 @@ const ChatInterface: React.FC<Props> = ({ messages = [], isLoading }) => {
                   </div>
                 )}
 
-                {msg.imageUrl && (
-                  <div className="mt-4 relative group/img cursor-zoom-in overflow-hidden rounded-2xl border border-slate-800">
-                     <div className="absolute top-3 left-3 z-10">
-                        <span className="bg-black/60 backdrop-blur text-[9px] font-black text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded-lg uppercase tracking-widest">Clinical Finding</span>
-                     </div>
-                     <div className="absolute inset-0 bg-emerald-500/10 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center z-10">
+                {[
+                  ...(msg.images || []),
+                  ...(msg.imageUrl ? [{ url: msg.imageUrl, label: 'Clinical Finding', credit: undefined }] : [])
+                ].map((img, i) => (
+                  <figure key={i} className="mt-4">
+                    <div className="relative group/img cursor-zoom-in overflow-hidden rounded-2xl border border-slate-800 bg-black">
+                      <div className="absolute top-3 left-3 z-10 max-w-[85%]">
+                        <span className="bg-black/60 backdrop-blur text-[9px] font-black text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded-lg uppercase tracking-widest">{img.label}</span>
+                      </div>
+                      <div className="absolute inset-0 bg-emerald-500/10 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center z-10 pointer-events-none">
                         <Maximize2 className="w-8 h-8 text-white" />
-                     </div>
-                     <img 
-                       src={msg.imageUrl} 
-                       alt="Clinical Finding" 
-                       className="w-full object-cover max-h-[400px] transition-transform duration-500 group-hover/img:scale-105"
-                       onClick={() => setLightboxImage(msg.imageUrl || null)}
-                     />
-                  </div>
-                )}
+                      </div>
+                      <img
+                        src={img.url}
+                        alt={img.label}
+                        className="w-full object-contain max-h-[400px] transition-transform duration-500 group-hover/img:scale-105"
+                        onClick={() => setLightboxImage(img.url)}
+                      />
+                    </div>
+                    {img.credit && (
+                      <figcaption className="mt-1.5 px-1 text-[9px] text-slate-500">{img.credit}</figcaption>
+                    )}
+                  </figure>
+                ))}
               </div>
 
               {/* Metadata */}

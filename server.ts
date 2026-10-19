@@ -56,14 +56,14 @@ async function startServer() {
   // Generate a case from a free-text medical topic.
   app.post(
     "/api/sim/topic",
-    withKey("Failed to generate case.", (req) => startCaseFromTopicCmd(req.body.topic, req.body.level))
+    withKey("Failed to generate case.", (req) => startCaseFromTopicCmd(req.body.topic, req.body.level, req.body.referenceImaging))
   );
 
   // Generate a case from uploaded clinical records (PDF / images).
   app.post(
     "/api/sim/pdf",
     withKey("Failed to analyze records.", (req) =>
-      analyzePDFAndStartCaseCmd(req.body.files, req.body.extractedImages, req.body.level)
+      analyzePDFAndStartCaseCmd(req.body.files, req.body.extractedImages, req.body.level, req.body.referenceImaging)
     )
   );
 

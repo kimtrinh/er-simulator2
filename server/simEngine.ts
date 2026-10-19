@@ -92,16 +92,35 @@ RULES:
 9. Respond ONLY with the JSON object defined by the schema.`;
 };
 
+/** Built-in films the client can show (data/imagingLibrary.ts), described for the case writer. */
+export interface ReferenceFilm {
+  label: string;
+  findings: string;
+}
+
+const referenceImagingText = (films: ReferenceFilm[] = []) => {
+  const list = (films || []).filter((f) => f && f.label);
+  if (!list.length) return "";
+  return `
+
+REFERENCE IMAGING: the simulator holds these real films and shows them when the player orders the study after placing what the film shows:
+${list.map((f) => `- ${f.label}: ${f.findings}`).join("\n")}
+If this is a trauma case, keep the injuries consistent with these films where they fit (for example the side of a chest injury), so the player sees real images of their own resuscitation. Otherwise ignore them.`;
+};
+
 export const startCaseFromTopicCmd = async (
   topic: string,
-  level: TrainingLevel = "resident"
+  level: TrainingLevel = "resident",
+  referenceImaging: ReferenceFilm[] = []
 ) => {
   const parsed = await generateJSON({
     system: caseSystem(level),
     parts: [
       {
         type: "text",
-        text: `Create a complex, realistic, challenging ER simulation case based on the topic: "${topic}". Leave visualCatalog as an empty array (no documents were uploaded).`,
+        text: `Create a complex, realistic, challenging ER simulation case based on the topic: "${topic}". Leave visualCatalog as an empty array (no documents were uploaded).${referenceImagingText(
+          referenceImaging
+        )}`,
       },
     ],
     schema: CASE_INIT_SCHEMA,
@@ -119,7 +138,8 @@ export const startCaseFromTopicCmd = async (
 export const analyzePDFAndStartCaseCmd = async (
   files: { mimeType: string; data: string }[],
   extractedImages: string[],
-  level: TrainingLevel = "resident"
+  level: TrainingLevel = "resident",
+  referenceImaging: ReferenceFilm[] = []
 ) => {
   const fileParts: Part[] = (files || [])
     .filter(
@@ -137,7 +157,9 @@ export const analyzePDFAndStartCaseCmd = async (
 There are ${extractedImages.length} visual assets available, indexed 0..${Math.max(
               0,
               extractedImages.length - 1
-            )}. For any asset relevant to the case (EKG, chest X-ray, CT, etc.) add an entry to "visualCatalog" where "id" is the string index (e.g. "0") and "label" is a short name (e.g. "12-Lead EKG"). If no assets are relevant, return an empty visualCatalog array.`,
+            )}. For any asset relevant to the case (EKG, chest X-ray, CT, etc.) add an entry to "visualCatalog" where "id" is the string index (e.g. "0") and "label" is a short name (e.g. "12-Lead EKG"). If no assets are relevant, return an empty visualCatalog array. Label each asset by what it actually shows — modality and body region (e.g. "FAST — RUQ view", "AP chest X-ray") — never by the study you wish it were.${referenceImagingText(
+              referenceImaging
+            )}`,
       },
     ],
     schema: CASE_INIT_SCHEMA,
@@ -210,7 +232,8 @@ const SIM_PROGRESS_SCHEMA = {
     },
     isCaseOver: { type: "boolean" },
     clinicalRationale: { type: "string" },
-    imageIdToDisplay: { type: "string" },
+    imageIdsToDisplay: { type: "array", items: { type: "string" } },
+    confirmedFindings: { type: "array", items: { type: "string" } },
     interpretedOrders: {
       type: "array",
       items: {
@@ -283,7 +306,7 @@ export const progressSimulationCmd = async (
   context: string,
   history: string[],
   userAction: string,
-  visuals: { id: string; label: string }[],
+  visuals: { id: string; label: string; findings?: string }[],
   cmePoints: string[],
   workingDiagnoses: string[] = [],
   level: TrainingLevel = "resident"
@@ -313,7 +336,11 @@ STRICT RULES:
    player documented — a broad differential that named the true diagnosis early scores well; a
    narrow or anchored one scores poorly. Put that reasoning in "diagnosisReview", naming which of
    their diagnoses were right, which were reasonable to carry, and what was missed.
-10. If the player requests a visual that exists, set "imageIdToDisplay" to its id.
+10. IMAGES: "AVAILABLE VISUALS" lists only the pictures that match a study ordered THIS turn. For each
+   one that is consistent with the hidden truth, put its id in "imageIdsToDisplay" (one per study; several
+   if several studies were ordered). A visual that comes with FINDINGS is a real reference film of this
+   study: show it, and write the report for that study so it agrees with those findings. Never describe a
+   picture as a different study from the one it is.
 11. FREE-TEXT ORDERS: the player's action is often typed or voice-dictated — informal, abbreviated,
    or slightly misheard. Work out the real clinical orders a physician would mean, whether or not
    they appear on any menu, and carry them out. List each in "interpretedOrders" under a concise
@@ -321,11 +348,20 @@ STRICT RULES:
    for time-critical resuscitative interventions. If an order is clinically meaningless or
    dangerously incomplete (e.g. a high-risk drug with no dose), leave it out and have the nurse ask
    for clarification in the narrative instead of guessing.
-12. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
+12. CONFIRMED FINDINGS: in "confirmedFindings" list the diagnoses that the results returned THIS turn
+   objectively establish, in standard terms with the evidence in brackets (e.g. "Hemoperitoneum (positive
+   FAST)", "Right hemothorax (CXR)", "Open-book pelvic fracture (AP pelvis)", "Pericardial tamponade
+   (echo)"). Only what a test the player ordered has shown — never the hidden diagnosis otherwise. Empty if none.
+13. CONSULTANTS: when the player calls a consultant (e.g. trauma surgery), the call states the player's
+   diagnosis. Take it as the handoff: never ask for a "one-liner" or a one-line summary. Respond to the
+   diagnosis — accept the patient, ask for the specific missing study, or (at the training level above)
+   push back if the stated diagnosis is not supported by the results so far. If a call states no
+   diagnosis, the consultant asks "What's your diagnosis?" instead.
+14. Be concise and clinically realistic. Respond ONLY with the JSON object defined by the schema.`;
 
   const visualInventory = (visuals || [])
-    .map((v) => `id ${v.id}: ${v.label}`)
-    .join(", ");
+    .map((v) => `- id ${v.id}: ${v.label}${v.findings ? ` — FINDINGS: ${v.findings}` : ""}`)
+    .join("\n");
 
   const differential = (workingDiagnoses || []).filter(Boolean);
 
@@ -334,7 +370,8 @@ STRICT RULES:
 RECENT TRANSCRIPT:
 ${history.slice(-10).join("\n")}
 
-AVAILABLE VISUALS: ${visualInventory || "none"}
+AVAILABLE VISUALS (matching this turn's orders):
+${visualInventory || "none"}
 
 PLAYER'S DOCUMENTED DIFFERENTIAL: ${
     differential.length ? differential.join("; ") : "none documented yet"
@@ -356,6 +393,8 @@ PLAYER ACTION: ${userAction}`;
     physicalExam: ensureArray(parsed.physicalExam),
     diagnosticReports: ensureArray(parsed.diagnosticReports),
     labResults: ensureArray(parsed.labResults),
+    imageIdsToDisplay: ensureArray(parsed.imageIdsToDisplay).map(String),
+    confirmedFindings: ensureArray(parsed.confirmedFindings).filter(Boolean).map(String),
     // Left undefined when the model omits it, so the client can fall back to local matching.
     interpretedOrders: Array.isArray(parsed.interpretedOrders)
       ? parsed.interpretedOrders.filter((o: any) => o && o.label)

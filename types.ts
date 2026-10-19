@@ -19,7 +19,10 @@ export interface Message {
   /** 'tutor' / 'tutorQuestion' are private coaching — never sent to the bedside engine. */
   type?: 'text' | 'alert' | 'success' | 'tutor' | 'tutorQuestion';
   timestamp: number;
+  /** Legacy single image (older saved games). */
   imageUrl?: string;
+  /** Imaging shown with this result — one per study ordered. */
+  images?: { url: string; label: string; credit?: string }[];
   clinicalRationale?: string;
   /** Tutor messages: the teaching behind the hint, and an upcoming trap. */
   why?: string;
@@ -72,8 +75,13 @@ export interface ActionReviewItem {
 
 export interface ExtractedImage {
   id: string;
-  data: string; // base64
+  data: string; // base64, or a URL for built-in reference films
   label: string; // e.g. "EKG", "CXR"
+  /** Reference films: what the film shows, so the report can agree with it. */
+  findings?: string;
+  credit?: string;
+  /** Built-in reference film (data/imagingLibrary.ts) rather than from the case's own records. */
+  reference?: boolean;
 }
 
 export interface LabResult {
@@ -165,6 +173,8 @@ export interface GameState {
   level: TrainingLevel;
   /** Tutor hints requested this case (questions don't count). */
   hintsUsed?: number;
+  /** Diagnoses the player's own results have established — offered when calling a consultant. */
+  establishedFindings?: string[];
 }
 
 export interface ActionPayload {
@@ -181,7 +191,11 @@ export interface SimulationResponse {
   physicalExam?: { system: string; finding: string }[];
   isCaseOver: boolean;
   clinicalRationale?: string;
+  /** Legacy single image id. */
   imageIdToDisplay?: string;
+  imageIdsToDisplay?: string[];
+  /** Diagnoses this turn's results objectively established, e.g. "Hemoperitoneum (positive FAST)". */
+  confirmedFindings?: string[];
   debriefData?: DebriefData;
   /** The orders the engine understood from free-text / dictated input. */
   interpretedOrders?: { label: string; category: OrderCategory; critical: boolean }[];

@@ -71,7 +71,15 @@ import OrdersPanel from './components/OrdersPanel';
 import DiagnosisPanel from './components/DiagnosisPanel';
 import ChartPanel from './components/ChartPanel';
 import WorkspaceTabs, { WorkspaceView } from './components/WorkspaceTabs';
+import ConsultDialog from './components/ConsultDialog';
 import { OrderItem, classifyOrder, labelForOrder } from './data/orderCatalog';
+import {
+  availableReferenceStudies,
+  referenceVisual,
+  isTraumaCase,
+  eligibleVisuals,
+  ReferenceStudy
+} from './data/imagingLibrary';
 import { TRAINING_LEVELS, DEFAULT_LEVEL, getLevel, TrainingLevel } from './data/trainingLevels';
 import { startAmbientNoise, stopAmbientNoise } from './services/audioEffectsService';
 import { clsx, type ClassValue } from 'clsx';
@@ -163,6 +171,42 @@ const DEFAULT_STATE: GameState = {
 };
 
 const newId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const mergeUnique = (list: string[], extra: string[]) =>
+  [...list, ...extra].filter((x, i, all) => x && x.trim() && all.findIndex(y => sameText(x, y)) === i);
+
+/** Reference films go into trauma cases only, and the case writer is told about them up front. */
+const filmsForCaseWriter = (films: ReferenceStudy[]) => films.map(f => ({ label: f.label, findings: f.findings }));
+const withReferenceFilms = (
+  visuals: GameState['visuals'],
+  films: ReferenceStudy[],
+  caseText: string
+): GameState['visuals'] => (isTraumaCase(caseText) ? [...(visuals || []), ...films.map(referenceVisual)] : visuals || []);
+
+/** A typed or dictated call to surgery — answered with the consult dialog. */
+const SURGERY_CALL = /\b(call|page|consult|get)\b[^.]{0,40}\b(trauma\s+surg|surg(ery|eon|ical))|\b(trauma\s+)?surg(ery|ical)\s+consult/i;
+const STATES_DIAGNOSIS = /\b(diagnos[ie]s|dx|impression)\b/i;
+
+const TRAUMA_DIAGNOSES = [
+  'Hemorrhagic shock',
+  'Hemoperitoneum',
+  'Splenic injury',
+  'Liver injury',
+  'Hemothorax',
+  'Pneumothorax',
+  'Unstable pelvic fracture',
+  'Cardiac tamponade',
+  'Traumatic brain injury',
+];
+
+const consultService = (label: string, trauma: boolean) => {
+  if (/surg/i.test(label) && !/neuro/i.test(label)) return trauma ? 'Trauma Surgery' : 'General Surgery';
+  return label.replace(/\s*consult\s*/i, '').trim() || 'the consultant';
+};
+
+const consultNote = (diagnoses: string[], request: string) =>
+  `My diagnosis: ${diagnoses.join('; ')}.${request ? ` My ask: ${request}.` : ''}`;
 
 const ORDER_CATEGORIES: OrderCategory[] = [
   'critical', 'medication', 'lab', 'imaging', 'procedure',
@@ -380,7 +424,12 @@ const App: React.FC = () => {
     setGameState(prev => ({ ...prev, stage: 'analyzing' }));
 
     try {
-      const initData = await startCaseFromTopic(topicInput, level);
+      const films = await availableReferenceStudies();
+      const initData = await startCaseFromTopic(
+        topicInput,
+        level,
+        isTraumaCase(topicInput) ? filmsForCaseWriter(films) : []
+      );
       setActiveView('sim');
       setGameState({
         ...DEFAULT_STATE,
@@ -390,7 +439,11 @@ const App: React.FC = () => {
         learningPoints: initData.learningPoints,
         hiddenDiagnosis: initData.diagnosis,
         caseContext: initData.context,
-        visuals: initData.visualCatalog,
+        visuals: withReferenceFilms(
+          initData.visualCatalog,
+          films,
+          `${topicInput}\n${initData.diagnosis}\n${initData.context}\n${initData.intro}`
+        ),
         criticalActions: initData.criticalActions || [],
         level
       });
@@ -423,7 +476,8 @@ const App: React.FC = () => {
         }
       }
 
-      const initData = await analyzePDFAndStartCase(geminiInputs, allVisualAssets, level);
+      const films = await availableReferenceStudies();
+      const initData = await analyzePDFAndStartCase(geminiInputs, allVisualAssets, level, filmsForCaseWriter(films));
       setActiveView('sim');
       setGameState({
         ...DEFAULT_STATE,
@@ -433,7 +487,11 @@ const App: React.FC = () => {
         learningPoints: initData.learningPoints,
         hiddenDiagnosis: initData.diagnosis,
         caseContext: initData.context,
-        visuals: initData.visualCatalog,
+        visuals: withReferenceFilms(
+          initData.visualCatalog,
+          films,
+          `${initData.diagnosis}\n${initData.context}\n${initData.intro}`
+        ),
         criticalActions: initData.criticalActions || [],
         level
       });
@@ -466,6 +524,14 @@ const App: React.FC = () => {
       orderLog: [...clickedEntries, ...(prev.orderLog || [])]
     }));
     
+    // Only pictures of a study ordered now (and, for reference films, of a patient
+    // who already has the tube or binder they show) can come up with this turn.
+    const chartSoFar = [
+      ...(gameState.orderLog || []).map(o => `${o.label} ${o.detail || ''}`),
+      ...bedsideMessages(gameState.messages).filter(m => m.role === 'user').map(m => m.content)
+    ].join('\n');
+    const turnVisuals = eligibleVisuals(gameState.visuals || [], actionText, chartSoFar);
+
     setIsLoading(true);
     let freeTextLogged = !!logEntries;
     try {
@@ -478,7 +544,7 @@ const App: React.FC = () => {
           gameState.caseContext, 
           bedsideMessages(gameState.messages).map(m => m.content), 
           actionText, 
-          gameState.visuals,
+          turnVisuals,
           gameState.learningPoints,
           gameState.workingDiagnoses
             .filter(d => d.confidence !== 'ruled-out')
@@ -501,12 +567,21 @@ const App: React.FC = () => {
         freeTextLogged = true;
       }
       
+      const shownIds = mergeUnique(
+        Array.isArray(response.imageIdsToDisplay) ? response.imageIdsToDisplay.map(String) : [],
+        response.imageIdToDisplay ? [String(response.imageIdToDisplay)] : []
+      );
+      const images = shownIds
+        .map(id => turnVisuals.find(v => v.id === id))
+        .filter((v): v is NonNullable<typeof v> => !!v && !!v.data)
+        .map(v => ({ url: v.data, label: v.label, credit: v.credit }));
+
       const sysMsg: Message = {
         role: 'assistant',
         content: response.narrative,
         timestamp: Date.now(),
         clinicalRationale: response.clinicalRationale,
-        imageUrl: response.imageIdToDisplay ? gameState.visuals.find(v => v.id === response.imageIdToDisplay)?.data : undefined
+        images: images.length ? images : undefined
       };
       const reviewMsg: Message = {
         role: 'assistant',
@@ -524,6 +599,10 @@ const App: React.FC = () => {
           ...prev,
           vitals: response.updatedVitals,
           vitalTrend: response.vitalTrend,
+          establishedFindings: mergeUnique(
+            prev.establishedFindings || [],
+            Array.isArray(response.confirmedFindings) ? response.confirmedFindings.map(String) : []
+          ),
           messages: [...prev.messages, sysMsg, ...(response.isCaseOver ? [reviewMsg] : [])],
           orderLog: [...understood, ...(prev.orderLog || [])],
           labResults: [...(prev.labResults || []), ...incomingLabs],
@@ -664,9 +743,46 @@ const App: React.FC = () => {
     }
   };
 
+  /** A consult waiting on the player's diagnosis before the call goes out. */
+  const [pendingConsult, setPendingConsult] = useState<{ service: string; send: (note: string) => void } | null>(null);
+  const traumaCase = () =>
+    isTraumaCase(`${gameState.hiddenDiagnosis}\n${gameState.caseContext}\n${gameState.messages[0]?.content || ''}`);
+
+  const callConsultant = (diagnoses: string[], request: string) => {
+    const pending = pendingConsult;
+    setPendingConsult(null);
+    if (!pending) return;
+    // What the player called in is their differential too.
+    diagnoses.forEach(addDiagnosis);
+    pending.send(consultNote(diagnoses, request));
+  };
+
+  /** Typed or dictated orders. A call to surgery asks for the diagnosis first. */
+  const handleTypedAction = (actionText: string) => {
+    if (SURGERY_CALL.test(actionText) && !STATES_DIAGNOSIS.test(actionText) && !/activate/i.test(actionText)) {
+      setPendingConsult({
+        service: traumaCase() ? 'Trauma Surgery' : 'General Surgery',
+        send: note => handleUserAction(`${actionText.trim()} ${note}`)
+      });
+      return;
+    }
+    handleUserAction(actionText);
+  };
+
   /** Place one or more catalogue orders as a single signed order set. */
-  const handleSubmitOrders = (orders: OrderItem[]) => {
-    if (!orders.length) return;
+  const handleSubmitOrders = (picked: OrderItem[], note?: string) => {
+    if (!picked.length) return;
+    const consult = picked.find(o => o.category === 'consult');
+    if (consult && note === undefined) {
+      setPendingConsult({
+        service: consultService(consult.label, traumaCase()),
+        send: n => handleSubmitOrders(picked, n)
+      });
+      return;
+    }
+    const orders = note
+      ? picked.map(o => (o.category === 'consult' ? { ...o, detail: `${o.detail} ${note}` } : o))
+      : picked;
     setOrderBasket([]);
     const actionText =
       orders.length === 1
@@ -934,7 +1050,7 @@ const App: React.FC = () => {
               <>
                 <ChatInterface messages={gameState.messages} isLoading={isLoading} />
                 <Controls
-                  onAction={handleUserAction}
+                  onAction={handleTypedAction}
                   onAskTutor={handleAskTutor}
                   hintsUsed={gameState.hintsUsed || 0}
                   disabled={isLoading}
@@ -1154,6 +1270,16 @@ const App: React.FC = () => {
         {renderContent()}
       </main>
 
+      {pendingConsult && (
+        <ConsultDialog
+          service={pendingConsult.service}
+          established={gameState.establishedFindings || []}
+          differential={gameState.workingDiagnoses}
+          common={pendingConsult.service === 'Trauma Surgery' ? TRAUMA_DIAGNOSES : []}
+          onCancel={() => setPendingConsult(null)}
+          onCall={callConsultant}
+        />
+      )}
       {error && <ErrorModal message={error} onDismiss={() => setError(null)} />}
       <KeySettingsModal
         open={keyModal.open}

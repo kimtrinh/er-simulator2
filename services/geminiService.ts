@@ -107,16 +107,25 @@ export interface CaseInitResponse {
   visualCatalog: ExtractedImage[];
 }
 
+/** Built-in reference films the case writer can build around (data/imagingLibrary.ts). */
+export interface ReferenceFilm {
+  label: string;
+  findings: string;
+}
+
 export const startCaseFromTopic = async (
   topic: string,
-  level: TrainingLevel
-): Promise<CaseInitResponse> => postJSON("/api/sim/topic", { topic, level });
+  level: TrainingLevel,
+  referenceImaging: ReferenceFilm[] = []
+): Promise<CaseInitResponse> => postJSON("/api/sim/topic", { topic, level, referenceImaging });
 
 export const analyzePDFAndStartCase = async (
   files: GeminiFileInput[],
   extractedImages: string[],
-  level: TrainingLevel
-): Promise<CaseInitResponse> => postJSON("/api/sim/pdf", { files, extractedImages, level });
+  level: TrainingLevel,
+  referenceImaging: ReferenceFilm[] = []
+): Promise<CaseInitResponse> =>
+  postJSON("/api/sim/pdf", { files, extractedImages, level, referenceImaging });
 
 export const progressSimulation = async (
   context: string,
@@ -132,7 +141,8 @@ export const progressSimulation = async (
     context,
     history,
     userAction,
-    visuals,
+    // The engine only needs to know what each picture is, not the pixels.
+    visuals: visuals.map(({ id, label, findings }) => ({ id, label, findings })),
     cmePoints,
     workingDiagnoses,
     level,
