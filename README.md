@@ -61,6 +61,22 @@ Browser (React + Vite)
 - History is stored in `localStorage`; there is no external database or sign-in.
 - `medisim-er-local.html` is a standalone single-file edition that runs against your own model in LM Studio / Ollama, or with your own Gemini / Claude key pasted into its settings. It mirrors the same workspace, order catalogue, differential, tutor, and grading.
 
+## Authoring new cases (Claude Code skill)
+
+`.claude/skills/new-er-case/` is a Claude Code skill that builds a new MediSim ER case end to end:
+a current-evidence sweep, an undifferentiated gold-case seed with offline responders, validated and
+licence-clean radiology (X-ray, CT, MRI, ultrasound stills and cine, ECG) with grid-measured hotspots,
+Gemini patient/room art, Codex-built sprite animations for procedures, and a Ken Burns intro reel.
+In Claude Code, run `/new-er-case <case idea>`.
+
+To use it from the MediSim ER source checkout (or any folder), install it once for your user:
+
+```bash
+mkdir -p ~/.claude/skills && cp -R .claude/skills/new-er-case ~/.claude/skills/
+```
+
+Image generation needs `GEMINI_API_KEY`; procedure rigs use the Codex CLI (`codex exec`) when installed.
+
 ## Notes
 
 - No secrets are committed. Player keys are never stored server-side or logged; the optional owner keys and access code are provided at runtime via `.env.local` (git-ignored) or your host's environment.

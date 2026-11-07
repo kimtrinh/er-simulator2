@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ken Burns Intro Demo</title>
+<link rel="stylesheet" href="ken-burns-intro.css">
+<style>
+  :root{--bg:#0b1220;--fg:#e2e8f0;--accent:#6ee7b7}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;padding:24px 16px}
+  button.play{padding:10px 18px;border-radius:10px;border:1px solid var(--accent);background:#064e3b;color:#d1fae5;font-weight:700;cursor:pointer}
+  code{color:var(--accent)}
+</style>
+</head>
+<body>
+<h1>Ken Burns intro — demo</h1>
+<p>Placeholder stills stand in for the Gemini-generated case stills. Replace <code>src</code> with
+<code>scenes/intro/&lt;case-id&gt;/NN.webp</code>. Add <code>?fast</code> to the URL for a 1.5&nbsp;s-per-shot run.</p>
+<button class="play" id="play">▶ Play intro</button>
+<p id="status"></p>
+<script src="ken-burns-intro.js"></script>
+<script>
+// Placeholder stills: SVG scenes with an obvious focal object so the push-in is visible.
+function still(bg1, bg2, label, fx, fy){
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${bg1}"/><stop offset="1" stop-color="${bg2}"/></linearGradient></defs>
+    <rect width="1920" height="1080" fill="url(#g)"/>
+    ${Array.from({length:24},(_,i)=>`<rect x="${(i*83)%1920}" y="${(i*137)%1080}" width="160" height="90" fill="rgba(255,255,255,.04)"/>`).join('')}
+    <circle cx="${fx*1920}" cy="${fy*1080}" r="90" fill="rgba(110,231,183,.25)" stroke="#6ee7b7" stroke-width="6"/>
+    <text x="${fx*1920}" y="${fy*1080+210}" fill="#e2e8f0" font-family="sans-serif" font-size="64" text-anchor="middle">${label}</text>
+  </svg>`;
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
+const speech = [
+  {speaker:'narrator', text:'Rain on the ambulance bay doors, a little after two in the morning.'},
+  {speaker:'medic', text:'Fifty-eight-year-old, found on the kitchen floor by his wife. He was talking to us in the rig.'},
+  {speaker:'family', text:'He said his back hurt after dinner. He never complains.'},
+  {speaker:'nurse', text:'Bay three is ready. Let’s get him over.'}
+];
+const fast = location.search.includes('fast');
+const reel = { shots: [
+  { src: still('#0f172a','#1e3a5f','Ambulance bay',0.62,0.45), from:[0.5,0.5,1.0], to:[0.62,0.45,1.16], speech:[0] },
+  { src: still('#1f2937','#3f3f46','Stretcher arrives',0.3,0.55), from:[0.32,0.55,1.1], to:[0.66,0.55,1.1], speech:[1] },
+  { src: still('#3b0764','#1e1b4b','Hands on the rail',0.45,0.6), from:[0.5,0.5,1.04], to:[0.45,0.6,1.2], speech:[2] },
+  { src: still('#022c22','#0f172a','Resus bay',0.5,0.4), from:[0.5,0.42,1.18], to:[0.5,0.5,1.02], speech:[3] }
+]};
+const status = document.getElementById('status');
+document.getElementById('play').onclick = async () => {
+  status.textContent = 'playing…';
+  // Demo onTurn: no audio, just a reading-speed delay per caption.
+  const onTurn = fast ? null : (i => new Promise(r => setTimeout(r, Math.max(2500, speech[i].text.length * 55))));
+  const why = await playKenBurnsIntro(reel, { speech, onTurn, minShotMs: fast ? 1500 : 6000, fadeMs: fast ? 400 : 1200 });
+  status.textContent = 'intro ' + why + ' — the live room view would start here.';
+};
+</script>
+</body>
+</html>
