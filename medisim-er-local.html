@@ -480,24 +480,29 @@ function normVitals(v){
     hr:n(v.hr,DEFAULT_VITALS.hr), bpSystolic:n(v.bpSystolic,DEFAULT_VITALS.bpSystolic),
     bpDiastolic:n(v.bpDiastolic,DEFAULT_VITALS.bpDiastolic), rr:n(v.rr,DEFAULT_VITALS.rr),
     o2:n(v.o2,DEFAULT_VITALS.o2), temp:n(v.temp,DEFAULT_VITALS.temp),
-    rhythm: v.rhythm || DEFAULT_VITALS.rhythm
+    rhythm: v.rhythm || DEFAULT_VITALS.rhythm,
+    // Left undefined when the model gives none, so the monitor shows "--" rather than a made-up value.
+    etco2: isFinite(parseFloat(v.etco2)) ? parseFloat(v.etco2) : undefined,
+    capnogram: v.capnogram==='obstructive' ? 'obstructive' : 'normal'
   };
 }
 
 // ===================== PROMPTS =====================
+// What the bedside monitor needs to draw its traces: the ECG from "rhythm", the capnogram from rr + etco2.
+const MONITOR_RULE = `"rhythm" names what is on the monitor right now in standard terms (e.g. Sinus tachycardia, Atrial fibrillation with RVR, SVT, Complete heart block, Ventricular tachycardia, Ventricular fibrillation, PEA, Asystole), adding ST elevation, peaked T waves, wide QRS or PVCs when the strip shows them. "hr" is the rate on the ECG: keep it during PEA; 0 only in asystole or VF. "etco2" is end-tidal CO2 in mmHg (normal 35-45; high with hypoventilation, low with hyperventilation or poor cardiac output, 10-20 during CPR, 0 when apnoeic). "capnogram" is "obstructive" with bronchospasm or airway obstruction, otherwise "normal".`;
 const caseSystem = () => { const L = getLevel(S.level); return `You are a Clinical Simulation Architect that builds high-fidelity emergency-room training cases.
 
 TRAINING LEVEL — ${L.label.toUpperCase()}: ${L.casePrompt}
 Respond with ONLY a JSON object of this exact shape:
-{"intro":string,"vitals":{"hr":number,"bpSystolic":number,"bpDiastolic":number,"rr":number,"o2":number,"temp":number,"rhythm":string},"context":string,"diagnosis":string,"learningPoints":[string],"criticalActions":[string]}
-Rules: (1) "intro" is a vivid bedside scene with nurse/patient dialogue and the chief complaint — never name the diagnosis or the learning points in it. (2) "context" is the hidden clinical truth (true diagnosis, pathophysiology, expected course, key findings) used by the engine. (3) "diagnosis" is the single hidden correct diagnosis. (4) 3-5 concise "learningPoints". (5) "criticalActions" is 4-8 time-critical interventions this patient needs, as short imperative order names a physician would click at the bedside (e.g. "Apply pelvic binder", "Arterial tourniquet", "Activate massive transfusion protocol") — the intervention only, never the diagnosis. (6) Vitals must fit the presentation, and the difficulty must match the training level above. Output JSON only, no prose, no markdown.`; };
+{"intro":string,"vitals":{"hr":number,"bpSystolic":number,"bpDiastolic":number,"rr":number,"o2":number,"temp":number,"rhythm":string,"etco2":number,"capnogram":"normal"|"obstructive"},"context":string,"diagnosis":string,"learningPoints":[string],"criticalActions":[string]}
+Rules: (1) "intro" is a vivid bedside scene with nurse/patient dialogue and the chief complaint — never name the diagnosis or the learning points in it. (2) "context" is the hidden clinical truth (true diagnosis, pathophysiology, expected course, key findings) used by the engine. (3) "diagnosis" is the single hidden correct diagnosis. (4) 3-5 concise "learningPoints". (5) "criticalActions" is 4-8 time-critical interventions this patient needs, as short imperative order names a physician would click at the bedside (e.g. "Apply pelvic binder", "Arterial tourniquet", "Activate massive transfusion protocol") — the intervention only, never the diagnosis. (6) Vitals must fit the presentation, and the difficulty must match the training level above. (7) ${MONITOR_RULE} Output JSON only, no prose, no markdown.`; };
 
 const engineSystem = () => { const L = getLevel(S.level); return `You are the Bedside Simulation Engine for an ER trainer.
 
 TRAINING LEVEL — ${L.label.toUpperCase()}. Bedside behaviour: ${L.enginePrompt}
 Debrief marking: ${L.debriefPrompt} The player is the treating physician. Given the hidden context, the recent transcript, and the player's latest action, respond with ONLY a JSON object of this shape:
-{"narrative":string,"updatedVitals":{"hr":number,"bpSystolic":number,"bpDiastolic":number,"rr":number,"o2":number,"temp":number,"rhythm":string},"vitalTrend":"stable"|"improving"|"worsening"|"critical","labResults":[{"name":string,"value":string,"unit":string,"flag":string}],"diagnosticReports":[{"title":string,"body":string}],"physicalExam":[{"system":string,"finding":string}],"clinicalRationale":string,"interpretedOrders":[{"label":string,"category":"critical"|"medication"|"lab"|"imaging"|"procedure"|"exam"|"history"|"consult"|"disposition"|"other","critical":boolean}],"isCaseOver":boolean,"debrief":{"outcome":string,"score":number,"summary":string,"criticalEvents":[{"event":string,"feedback":string,"type":"positive"|"negative"|"neutral"}],"missedOpportunities":[string],"learningPoints":[string]}}
-Rules: (1) Only include labResults/diagnosticReports/physicalExam the player actually ordered or performed this turn; otherwise use empty arrays. (2) "flag" is "H","L","CRITICAL" or "". (3) Update ALL vitals fields and set vitalTrend from physiology + the player's action. (4) "clinicalRationale" explains WHY things changed. (5) Never reveal the diagnosis directly. (6) The player may carry several working diagnoses at once and may document or revise that differential mid-case — treat it as their charted reasoning, never confirm or deny it outright, and never let a wrong entry change the underlying truth. (7) The player may send several orders in one action: carry out every one and report the result of each. (8) Set "isCaseOver" true when the encounter ends (stabilized/admitted, transferred, or death) and fill "debrief" (score 0-100), scoring the breadth, ranking, and timing of the differential they documented and marking to the training level above; otherwise "debrief" may be an empty object {}. (9) The player's action is often free text or voice dictation — informal, abbreviated, or slightly misheard. Work out the real clinical orders a physician would mean, whether or not they are on any menu, and carry them out. List each one in "interpretedOrders" under a concise standard order name (e.g. "Ceftriaxone 2 g IV", "CT head without contrast"); "critical" is true for time-critical resuscitative interventions. If an order is clinically meaningless, or dangerously incomplete (e.g. a high-risk drug with no dose), leave it out of "interpretedOrders" and have the nurse ask for clarification in the narrative instead of guessing. Output JSON only.`; };
+{"narrative":string,"updatedVitals":{"hr":number,"bpSystolic":number,"bpDiastolic":number,"rr":number,"o2":number,"temp":number,"rhythm":string,"etco2":number,"capnogram":"normal"|"obstructive"},"vitalTrend":"stable"|"improving"|"worsening"|"critical","labResults":[{"name":string,"value":string,"unit":string,"flag":string}],"diagnosticReports":[{"title":string,"body":string}],"physicalExam":[{"system":string,"finding":string}],"clinicalRationale":string,"interpretedOrders":[{"label":string,"category":"critical"|"medication"|"lab"|"imaging"|"procedure"|"exam"|"history"|"consult"|"disposition"|"other","critical":boolean}],"isCaseOver":boolean,"debrief":{"outcome":string,"score":number,"summary":string,"criticalEvents":[{"event":string,"feedback":string,"type":"positive"|"negative"|"neutral"}],"missedOpportunities":[string],"learningPoints":[string]}}
+Rules: (1) Only include labResults/diagnosticReports/physicalExam the player actually ordered or performed this turn; otherwise use empty arrays. (2) "flag" is "H","L","CRITICAL" or "". (3) Update ALL vitals fields and set vitalTrend from physiology + the player's action. ${MONITOR_RULE} (4) "clinicalRationale" explains WHY things changed. (5) Never reveal the diagnosis directly. (6) The player may carry several working diagnoses at once and may document or revise that differential mid-case — treat it as their charted reasoning, never confirm or deny it outright, and never let a wrong entry change the underlying truth. (7) The player may send several orders in one action: carry out every one and report the result of each. (8) Set "isCaseOver" true when the encounter ends (stabilized/admitted, transferred, or death) and fill "debrief" (score 0-100), scoring the breadth, ranking, and timing of the differential they documented and marking to the training level above; otherwise "debrief" may be an empty object {}. (9) The player's action is often free text or voice dictation — informal, abbreviated, or slightly misheard. Work out the real clinical orders a physician would mean, whether or not they are on any menu, and carry them out. List each one in "interpretedOrders" under a concise standard order name (e.g. "Ceftriaxone 2 g IV", "CT head without contrast"); "critical" is true for time-critical resuscitative interventions. If an order is clinically meaningless, or dangerously incomplete (e.g. a high-risk drug with no dose), leave it out of "interpretedOrders" and have the nurse ask for clarification in the narrative instead of guessing. Output JSON only.`; };
 
 // ===================== ENGINE FLOWS =====================
 async function startCase(topic){
@@ -542,7 +547,10 @@ DOCTOR'S DOCUMENTED DIFFERENTIAL: ${differential.length?differential.join('; '):
 DOCTOR'S LATEST ACTION: ${action}`;
     const out = await callModel([{role:'system',content:engineSystem()},{role:'user',content:user}]);
     const r = extractJSON(out);
+    const before = MediSimMonitor.classifyRhythm(S.vitals.rhythm);
     S.vitals = normVitals(r.updatedVitals);
+    const after = MediSimMonitor.classifyRhythm(S.vitals.rhythm);
+    if(after.kind!==before.kind || after.pulseless!==before.pulseless) S.shown = {...S.vitals};
     S.trend = ['stable','improving','worsening','critical'].includes(r.vitalTrend)?r.vitalTrend:'stable';
     if(Array.isArray(r.labResults)) S.labs.push(...r.labResults);
     if(Array.isArray(r.diagnosticReports)) S.reports.unshift(...r.diagnosticReports);
@@ -651,55 +659,31 @@ function speak(text){
   speechSynthesis.speak(u);
 }
 
-// ===================== ECG WAVEFORM =====================
-let ecgRAF=null, ecgX=0, ecgBuf=[];
-function startECG(canvas){
-  cancelAnimationFrame(ecgRAF);
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio||1;
-  function resize(){ canvas.width=canvas.clientWidth*dpr; canvas.height=canvas.clientHeight*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); }
-  resize(); window.addEventListener('resize',resize);
-  const W=()=>canvas.clientWidth, H=()=>canvas.clientHeight;
-  ecgBuf = new Array(Math.ceil(canvas.clientWidth)).fill(0);
-  let t=0;
-  function beat(phase){ // phase 0..1 of one cardiac cycle -> mV-ish
-    const p=phase;
-    if(p<0.10) return 0.08*Math.sin(p/0.10*Math.PI);          // P
-    if(p<0.16) return 0;                                       // PR
-    if(p<0.18) return -0.12;                                   // Q
-    if(p<0.21) return 1.0;                                     // R
-    if(p<0.24) return -0.28;                                   // S
-    if(p<0.42) return 0;                                       // ST
-    if(p<0.58) return 0.20*Math.sin((p-0.42)/0.16*Math.PI);    // T
-    return 0;
-  }
-  function frame(){
-    const hr = Math.max(20, S.shown.hr||60);
-    const cycle = 60/hr;          // seconds per beat
-    const speed = 0.016;          // seconds advanced per frame (~60fps)
-    t += speed;
-    const phase = (t % cycle)/cycle;
-    const crit = hr>120||hr<50;
-    const y = beat(phase);
-    ecgBuf.push(y); if(ecgBuf.length>W()) ecgBuf.shift();
-    ctx.clearRect(0,0,W(),H());
-    // grid
-    ctx.strokeStyle='rgba(226,232,240,.05)'; ctx.lineWidth=1;
-    for(let x=0;x<W();x+=20){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H());ctx.stroke();}
-    for(let yy=0;yy<H();yy+=20){ctx.beginPath();ctx.moveTo(0,yy);ctx.lineTo(W(),yy);ctx.stroke();}
-    // trace
-    ctx.strokeStyle = crit ? '#ef4444' : '#10b981';
-    ctx.lineWidth=2; ctx.shadowBlur=8; ctx.shadowColor=ctx.strokeStyle;
-    ctx.beginPath();
-    const mid=H()*0.6, amp=H()*0.42;
-    for(let i=0;i<ecgBuf.length;i++){
-      const px=i, py=mid-ecgBuf[i]*amp;
-      i===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
-    }
-    ctx.stroke(); ctx.shadowBlur=0;
-    ecgRAF=requestAnimationFrame(frame);
-  }
-  frame();
+// ===================== MONITOR WAVEFORMS =====================
+// ECG, pleth and capnogram. The engine is shared with the online app.
+// <monitor-engine> generated from components/monitor by `npm run sync:local` — edit the source, not this block
+"use strict";var MediSimMonitor=(()=>{var g=Object.defineProperty;var W=Object.getOwnPropertyDescriptor;var O=Object.getOwnPropertyNames;var A=Object.prototype.hasOwnProperty;var F=(l,e,i)=>e in l?g(l,e,{enumerable:!0,configurable:!0,writable:!0,value:i}):l[e]=i;var z=(l,e)=>{for(var i in e)g(l,i,{get:e[i],enumerable:!0})},D=(l,e,i,t)=>{if(e&&typeof e=="object"||typeof e=="function")for(let r of O(e))!A.call(l,r)&&r!==i&&g(l,r,{get:()=>e[r],enumerable:!(t=W(e,r))||t.enumerable});return l};var j=l=>D(g({},"__esModule",{value:!0}),l);var h=(l,e,i)=>F(l,typeof e!="symbol"?e+"":e,i);var G={};z(G,{MonitorEngine:()=>S,capnoScale:()=>E,capnoY:()=>P,classifyRhythm:()=>d});var B=/^.*(?:→|[-=]+>|\b(?:converted|converts|converting|cardioverted|reverted|reverts|returned|returns|return|back|degenerat\w+|deteriorat\w+|progress\w+|evolv\w+|chang\w+) (?:in)?to\b|\bback in\b|\bnow\b)/,I=/\b(?:no|not|without|negative for|absence of|absent|ruled out|r\/o|previously|formerly|prior|from|history of|hx of|h\/o|s\/p|status post|was in|free of|non-?specific|rather than|instead of|versus|vs)\b.*$/,L=/\b(?:resolved|resolution|terminated|abolished|aborted|suppressed|no longer)\b/,K=/\bpea\b|\bpvt\b|\bemd\b|pulseless|electromechanical dissociation|\bno (?:palpable |detectable |central |femoral |carotid )?pulses?\b|without (?:a )?pulse|absent pulses?|loss of pulses?|cardiac arrest|\bin arrest\b/;function d(l){let e=` ${String(l!=null?l:"").toLowerCase()} `.replace(/[‐‑]/g,"-").replace(/\s-+\s|[‒-―:]/g," , ").replace(/°/g," degree ").replace(/\bv[.\s-]*(fib|tach)/g,"v$1").replace(/\ba[.\s-]*(fib|flutter)/g,"a$1").replace(/\s+/g," "),t=!(/\brosc\b|return of spontaneous circulation/.test(e)&&!/\b(?:no|without|not|failed)\b[^,;.]*(?:\brosc\b|return of spontaneous)/.test(e))&&K.test(e.replace(/post-?\s?(?:cardiac-?\s?)?arrest/g," ")),r=/fail\w* (?:to|of) capture|no capture|non-?capture|loss of capture|without capture|not capturing/.test(e),n=/\bnsvt\b|non-?sustained|\bruns? of\b|salvos?/.test(e);e=e.replace(B," ").split(/[,;.()[\]]/).map(p=>L.test(p)?"":p.replace(I,"")).join(" , ").replace(/\s+/g," ").replace(/supra-?\s?ventricular/g,"supravent").replace(/idio-?\s?ventricular/g,"idiovent");let s=p=>p.test(e),o=s(/\bpaced\b|pacing|pacemaker|\bpacer\b/),a="sinus";s(/ventricular standstill|p-?\s?wave asystole/)?a="standstill":s(/asystol|flat-?\s?line/)?a="asystole":s(/ventricular fib|\bvfib|\bvf\b/)?a="vfib":s(/torsade|polymorphic/)?a="torsades":s(/sine-?\s?wave|sinusoidal/)?a="sine":!n&&s(/ventricular tach|\bvtach|\bvt\b|\bpvt\b|wide-?\s?complex tach|\bwct\b|ventricular flutter/)?a="vt":s(/agonal/)?a="agonal":o&&!r?a="paced":s(/complete (?:heart|av|atrioventricular) block|third-?\s?degree|3(?:rd)?-?\s?degree|\bchb\b|(?:av|atrioventricular) dissociation/)?a="chb":s(/flutter|\bafl\b/)?a="flutter":s(/mobitz (?:ii|2)\b|type (?:ii|2)\b|\b2 , 1\b|high-?\s?grade/)?a="mobitz2":s(/wenckebach|mobitz|second-?\s?degree|2(?:nd)?-?\s?degree|type (?:i|1)\b/)?a="wenckebach":s(/idiovent|ventricular escape|\baivr\b|ventricular rhythm/)?a="idioventricular":s(/atrial fib|\bafib|\baf\b|fibrillation/)?a="afib":s(/multifocal atrial|\bmat\b|wandering/)?a="mat":s(/\bsvt\b|supravent|\bavnrt\b|\bavrt\b|\bpsvt\b|atrial tach|narrow-?\s?complex tach|re-?entr/)?a="svt":s(/junctional/)?a="junctional":s(/first-?\s?degree|1(?:st)?-?\s?degree|prolonged pr|pr prolong|long pr/)&&(a="avb1"),(a==="asystole"||a==="vfib"||a==="standstill")&&(t=!0);let c=e.match(/\b([2-6]) , 1\b/),u="none";return s(/bigemin/)?u="bigeminy":s(/trigemin/)?u="trigeminy":n?u="runs":s(/\bpacs?\b|\bapcs?\b|premature atrial|atrial ectop/)?u="pac":s(/\bpvcs?\b|\bvpcs?\b|\bvpbs?\b|premature ventricular|ventricular premature|ectop|couplet/)&&(u="pvc"),{kind:a,pulseless:t,wide:s(/wide|broad|bundle branch|\b[lr]?bbb\b|qrs (?:widening|prolong)|widened qrs|aberran|\btca\b|tricyclic|sodium channel|intraventricular|\bivcd\b/),st:s(/st-?\s?(?:segment )?elev|\bstemi\b|\bste\b|tombston|elevated st|injury (?:pattern|current)/)?"elevation":s(/st-?\s?(?:segment )?depress|depressed st|\bstd\b|isch(?:a)?emic (?:st|change)|strain pattern/)?"depression":"none",tWave:s(/peaked t|tall t|tented t|hyperacute t|hyperkal/)?"peaked":s(/t-?\s?wave inver|inverted t|t inversion|\btwi\b|wellens|flipped t/)?"inverted":"normal",longQT:s(/long qt|prolonged qt|qtc? prolong|qtc? (?:of )?[5-9]\d\d/),ectopy:u,alternans:s(/alternans/),lowVoltage:s(/low-?\s?voltage/),osborn:s(/osborn|\bj-?\s?waves?\b/),delta:s(/delta wave|\bwpw\b|pre-?\s?excit|wolff/),uWave:s(/\bu-?\s?waves?\b|hypokal/),fine:s(/\bfine\b/),respVar:s(/sinus arrhythmia/),variable:s(/variable/),ratio:c?Number(c[1]):0,failedPacing:o&&r}}var m=Math.PI*2,v=(l,e,i)=>Math.min(i,Math.max(e,l)),b=(l,e,i,t=e)=>({mu:l,sl:e,sr:t,a:i}),x=(l,e)=>({t:l,comps:e,from:Math.min(...e.map(i=>i.mu-3.5*i.sl)),to:Math.max(...e.map(i=>i.mu+3.5*i.sr))}),y=(l,e=.13)=>b(l,.02,e),V=new Set(["vfib","torsades","asystole"]),H=new Set(["sinus","avb1","afib","junctional"]),w=class{constructor(e=Math.random){h(this,"rand",e);h(this,"spec",d(""));h(this,"specKey","");h(this,"hr",0);h(this,"respRate",0);h(this,"beats",[]);h(this,"qrs",[]);h(this,"spikes",[]);h(this,"fired",[]);h(this,"vNext",0);h(this,"aNext",0);h(this,"spikeNext",0);h(this,"idx",0);h(this,"lastQrs",-10);h(this,"sinceEctopic",0);h(this,"ectopicDue",6);h(this,"lastT",0);h(this,"osc",[0,0,0,0]);h(this,"noise",0)}set(e,i,t,r){this.hr=Number.isFinite(i)?i:0,this.respRate=Number.isFinite(t)?t:0;let n=JSON.stringify(e);n!==this.specKey&&(this.specKey=n,this.spec=e,this.beats=this.beats.filter(s=>s.t<=r),this.qrs=this.qrs.filter(s=>s.t<=r),this.spikes=this.spikes.filter(s=>s<=r),this.vNext=r+.3,this.aNext=r+.1,this.spikeNext=r+.2,this.idx=0,this.sinceEctopic=0)}takeBeats(){let e=this.fired;return this.fired=[],e}layout(){let e=this.spec.kind;return e==="vfib"||e==="torsades"||e==="sine"?[.52,.4]:[.66,.46]}meanRR(){let e=this.rate();return e>0?60/e:1}rate(){if(this.hr>0)return v(this.hr,8,320);switch(this.spec.kind){case"vt":case"svt":return 180;case"paced":return 70;case"sine":return 45;case"chb":case"idioventricular":return 35;case"agonal":return 18;default:return this.spec.pulseless?60:0}}strength(e,i,t=1){if(this.spec.pulseless)return 0;let r=e-this.lastQrs,n=v((r/Math.min(i,.75)-.35)/.65,.15,1);return t*n*(r>1.4*i?1.12:1)}pushQrs(e,i,t,r=1){this.beats.push(x(e,i)),this.qrs.push({t:e,strength:this.strength(e,t,r)}),this.lastQrs=e}supra(e,i,t,r=.13){let n=this.spec,s=[],o=n.wide||n.delta;e!==null&&s.push(y(-e+.045,r));let a;o?(n.delta&&s.push(b(.01,.02,.24*t,.014)),s.push(b(.052,.018,.92*t,.026)),s.push(b(.115,.02,-.32*t,.024)),a=.15):(s.push(b(.014,.006,-.08*t)),s.push(b(.036,.0095,t)),s.push(b(.058,.0085,(n.st==="elevation"?-.05:-.2)*t)),a=.085);let c=v((n.longQT?.58:.4)*Math.sqrt(i),a+.12,.66),u=c/.4,p=a+(c-a)*.62;if(n.osborn&&s.push(b(a+.008,.012,.3*t,.018)),n.st==="elevation"&&s.push(b(a+.03,.018,.3,(p-a)*.9)),n.st==="depression"&&s.push(b(a+.05,.025,-.16,(p-a)*.6)),n.tWave==="peaked")s.push(b(p,.03*u,.75,.027*u));else if(n.tWave==="inverted")s.push(b(p,.045*u,-.24));else if(n.kind==="flutter")s.push(b(p,.05*u,.07));else if(o)s.push(b(p,.062*u,-.2,.045*u));else{let f=n.st==="elevation"?.38:n.st==="depression"?.12:n.uWave?.1:.26;s.push(b(p,.062*u,f,.036*u))}return n.uWave&&s.push(b(c+.08,.036,.1)),s}ventricular(e,i,t=0){return[b(t+.075*e,.032*e,1.05*i,.04*e),b(t+.27*e,.07*e,-.5*i,.065*e)]}schedule(e){let i=this.spec,t=i.kind;if(i.failedPacing)for(;this.spikeNext<e;)this.spikes.push(this.spikeNext),this.spikeNext+=60/70;if(V.has(t))return;if(t==="standstill"){for(;this.aNext<e;)this.beats.push(x(this.aNext,[y(.045)])),this.aNext+=60/72;return}let r=this.rate();if(!r)return;let n=60/r;if(t==="wenckebach"||t==="mobitz2"){let s=t==="wenckebach"?4:i.ratio===2?2:3,o=n*(s-1)/s,a=[.2,.3,.36];for(;this.aNext<e;){let c=this.idx%s;if(this.beats.push(x(this.aNext,[y(.045)])),c<s-1){let u=t==="wenckebach"?a[c]:.18;this.pushQrs(this.aNext+u,this.supra(null,n,1),n)}this.idx++,this.aNext+=o}return}if(t==="chb"){let s=60/v(r*2.2,70,105);for(;this.aNext<e;)this.beats.push(x(this.aNext,[y(.045)])),this.aNext+=s;let o=i.wide||r<42;for(;this.vNext<e;)this.pushQrs(this.vNext,o?this.ventricular(1.1,.9):this.supra(null,n,1),n),this.vNext+=n;return}for(;this.vNext<e;)this.vNext=this.emit(this.vNext,r,n)}emit(e,i,t){let r=this.spec,n=r.kind,s=r.lowVoltage?.45:1;r.alternans&&this.idx%2&&(s*=.55),this.idx++;let o=t;switch(n){case"vt":{this.pushQrs(e,this.ventricular(v(t/.46,.5,1),s),t,.4);break}case"idioventricular":this.pushQrs(e,this.ventricular(1.15,.9*s),t,.7);break;case"agonal":this.pushQrs(e,this.ventricular(1.6,.5*s),t,.3),o=t*(.7+.6*this.rand());break;case"paced":this.spikes.push(e),this.pushQrs(e,this.ventricular(1,.9*s,.012),t,.9);break;case"sine":this.pushQrs(e,[b(.25*t,.11*t,.62),b(.75*t,.11*t,-.62)],t,.5);break;case"afib":this.pushQrs(e,this.supra(null,t,s),t),o=Math.max(.24,t*(.6+.8*this.rand()));break;case"flutter":this.pushQrs(e,this.supra(null,t,s),t),r.variable&&(o=(2+Math.floor(this.rand()*3))*.2);break;case"mat":{let c=Math.floor(this.rand()*3);this.pushQrs(e,this.supra([.15,.11,.19][c],t,s,[.13,-.09,.07][c]),t),o=t*(.72+.56*this.rand());break}case"svt":this.pushQrs(e,[...this.supra(null,t,s),b(.092,.014,-.07)],t);break;case"junctional":this.pushQrs(e,this.supra(null,t,s),t);break;default:{let c=n==="avb1"?.3:r.delta?.09:v(.16-(i-60)*4e-4,.11,.2);this.pushQrs(e,this.supra(c,t,s),t);let u=this.respRate>0?60/this.respRate:4;o=t*(1+(r.respVar?.14:.02)*Math.sin(m*e/u))}}if(r.ectopy==="none"||!H.has(n))return e+o;this.sinceEctopic++;let a=r.ectopy==="bigeminy"?1:r.ectopy==="trigeminy"?2:this.ectopicDue;if(this.sinceEctopic<a)return e+o;if(this.sinceEctopic=0,this.ectopicDue=4+Math.floor(this.rand()*6),r.ectopy==="pac"){let c=e+.66*o;return this.pushQrs(c,this.supra(.13,t,s,-.08),t),c+o}if(r.ectopy==="runs"){let c=e+.6*o,u=3+Math.floor(this.rand()*3);for(let p=0;p<u;p++,c+=.34)this.pushQrs(c,this.ventricular(.72,1.1),.34,.4);return c+o*.9}return this.pushQrs(e+.62*o,this.ventricular(.9,1.15),t,.5),e+2*o}flutterRatio(e){return this.spec.ratio||v(Math.round(300/e),1,6)}sample(e){let i=Math.max(0,e-this.lastT);this.lastT=e,this.schedule(e+.8);let t=this.spec,r=t.kind,n=0;for(let o of this.beats){let a=e-o.t;if(!(a<o.from||a>o.to))for(let c of o.comps){let u=a-c.mu,p=u<0?c.sl:c.sr;n+=c.a*Math.exp(-u*u/(2*p*p))}}for(this.beats.length>24&&(this.beats=this.beats.filter(o=>o.t+o.to>=e));this.qrs.length&&this.qrs[0].t<=e;)this.fired.push(this.qrs.shift());for(;this.spikes.length&&this.spikes[0]<=e;)this.spikes.shift(),n+=.9;let s=this.osc;if(r==="vfib"){s[0]+=i*(4.6+.9*Math.sin(m*.13*e)),s[1]+=i*(6.8+1.1*Math.sin(m*.09*e+1)),s[2]+=i*(3.1+.6*Math.sin(m*.21*e+2));let o=.6+.4*Math.sin(m*.17*e)*Math.sin(m*.07*e+1);n+=(t.fine?.1:.42)*o*(Math.sin(m*s[0])+.6*Math.sin(m*s[1])+.35*Math.sin(m*s[2]))}else if(r==="torsades")s[0]+=i*(this.hr>150?this.hr:230)/60,n+=Math.sin(m*s[0])*(.86*Math.sin(m*e/3.8)+.1);else if(r==="afib")s[0]+=i*(6.1+.8*Math.sin(m*.23*e)),s[1]+=i*8.3,n+=(.6+.4*Math.sin(m*.31*e))*(.035*Math.sin(m*s[0])+.022*Math.sin(m*s[1]));else if(r==="flutter"){let o=this.rate();if(o){s[0]+=i*(t.variable?300:o*this.flutterRatio(o))/60;let a=s[0]-Math.floor(s[0]);n+=.2*(a<.82?.5-a/.82:(a-.82)/.18-.5)}}return this.noise+=(this.rand()-.5-this.noise)*.35,n+=.022*Math.sin(m*.19*e)+.02*this.noise,n}},N=class N{constructor(){h(this,"pulses",[])}addBeat(e,i,t){i<=0||(this.pulses.push({t:e+N.DELAY,a:i,g:v(t/.8,.55,1.1)}),this.pulses.length>12&&this.pulses.shift())}sample(e,i,t){let r=0;for(let s of this.pulses){let o=(e-s.t)/s.g;if(o<-.1||o>1.1)continue;let a=o-.13,c=Math.exp(-a*a/(2*(a<0?.05*.05:.085*.085))),u=o-.38,p=.36*Math.exp(-u*u/(2*.07*.07));r+=s.a*(c+p)}let n=t>0?.04*Math.sin(m*e*t/60):0;return i*(r+n)}};h(N,"DELAY",.2);var k=N;function T(l,e,i){if(!(l>0)||!(i>0))return 0;let t=v((l-40)/60,0,1),r=v((l-e)/40,.35,1.1);return t*r}function E(l){let e=Number(l);return e>75?100:e>55?80:60}var M=class{constructor(e=Math.random){h(this,"rand",e);h(this,"rr",0);h(this,"etco2",0);h(this,"obstructive",!1);h(this,"breath",null);h(this,"next",0)}set(e,i,t){this.rr=Number.isFinite(e)?e:0;let r=Number(i);this.etco2=Number.isFinite(r)?r:0,this.obstructive=/obstruct|shark|bronchosp/i.test(String(t!=null?t:""))}sample(e){if(!(this.rr>0)||!(this.etco2>0)){this.next=e+.4;let c=this.breath;if((!c||e-c.t>c.len)&&(this.breath=null),!this.breath)return 0}else if(e>=this.next){let c=e-this.next>2?e:this.next,u=60/this.rr*(.96+.08*this.rand());this.breath={t:c,len:u,e:this.etco2*(.98+.04*this.rand()),obstructive:this.obstructive},this.next=c+u}let i=this.breath;if(!i)return 0;let t=v(.1*i.len,.12,.35),r=v(.5*i.len,.45,3.2),n=v(.07*i.len,.1,.25),s=Math.min(1,.8*i.len/(t+r+n));t*=s,r*=s,n*=s;let o=e-i.t,a=c=>c*c*(3-2*c);if(o<0)return 0;if(o<t+r){if(i.obstructive){let c=o/(t+r);return i.e*(1-Math.exp(-2.2*c))/(1-Math.exp(-2.2))}return o<t?i.e*.9*a(o/t):i.e*(.9+.1*(o-t)/r)}return o<t+r+n?i.e*(1-a((o-t-r)/n)):0}};var Q=240,U=94.5,Y=5,_=14,$=(l,e,i)=>Math.min(i,Math.max(e,l)),C=class{constructor(e,i,t){h(this,"canvas",e);h(this,"color",i);h(this,"lineWidth",t);h(this,"ctx");h(this,"w",0);h(this,"h",0);h(this,"dpr",1);h(this,"x",0);h(this,"y",null);h(this,"observer",null);this.ctx=e.getContext("2d"),this.resize(),typeof ResizeObserver!="undefined"&&(this.observer=new ResizeObserver(()=>this.resize()),this.observer.observe(e))}dispose(){var e;(e=this.observer)==null||e.disconnect()}resize(){let e=typeof window!="undefined"&&window.devicePixelRatio||1,i=Math.round(this.canvas.clientWidth*e),t=Math.round(this.canvas.clientHeight*e);i===this.w&&t===this.h||(this.w=i,this.h=t,this.dpr=e,this.canvas.width=i,this.canvas.height=t,this.x=0,this.y=null)}draw(e){let{ctx:i,w:t,h:r,dpr:n}=this;if(!i||t<2||r<2||!e.length)return;let s=t/n,o=Math.min(U,s/Y)*n/Q,a=this.lineWidth*n,c=(this.x+_*n)%t,u=e.length*o+n;i.clearRect(c,0,u,r),c+u>t&&i.clearRect(0,0,c+u-t,r),i.strokeStyle=this.color,i.lineWidth=a,i.lineJoin="round",i.lineCap="round",i.beginPath(),this.y!==null&&i.moveTo(this.x,this.y);for(let p of e){this.x+=o;let f=$(p*r,a,r-a);this.x>=t?(i.stroke(),this.x-=t,i.beginPath(),i.moveTo(this.x,f)):this.y===null?i.moveTo(this.x,f):i.lineTo(this.x,f),this.y=f}i.stroke()}},S=class{constructor(e=Math.random){h(this,"ecg");h(this,"pleth",new k);h(this,"capno");h(this,"traces",{});h(this,"input",{hr:0,rr:0,o2:0,bpSystolic:0,bpDiastolic:0,rhythm:""});h(this,"perfusion",0);h(this,"scale",60);h(this,"t",0);h(this,"sampled",0);h(this,"raf",0);h(this,"lastFrame",0);h(this,"onBeat",null);this.ecg=new w(e),this.capno=new M(e)}setInput(e){this.input=e,this.ecg.set(d(e.rhythm),e.hr,e.rr,this.sampled),this.capno.set(e.rr,e.etco2,e.capnogram),this.perfusion=T(e.bpSystolic,e.bpDiastolic,e.o2),this.scale=E(e.etco2)}attach(e,i,t,r=2){var n;(n=this.traces[e])==null||n.dispose(),delete this.traces[e],i&&(this.traces[e]=new C(i,t,r))}setColor(e,i){let t=this.traces[e];t&&(t.color=i)}start(){if(this.raf||typeof requestAnimationFrame=="undefined")return;this.lastFrame=0;let e=i=>{let t=this.lastFrame?Math.min(.1,(i-this.lastFrame)/1e3):0;this.lastFrame=i,this.step(t),this.raf=requestAnimationFrame(e)};this.raf=requestAnimationFrame(e)}stop(){this.raf&&cancelAnimationFrame(this.raf),this.raf=0}dispose(){this.stop(),Object.keys(this.traces).forEach(e=>this.attach(e,null,""))}step(e){var a,c,u,p;this.t+=e;let i=Math.floor((this.t-this.sampled)*Q);if(i<=0)return;let t=[],r=[],n=[],[s,o]=this.ecg.layout();for(let f=0;f<i;f++){this.sampled+=1/Q;let R=this.sampled;t.push(s-o*this.ecg.sample(R));for(let q of this.ecg.takeBeats())this.pleth.addBeat(q.t,q.strength,this.ecg.meanRR()),(a=this.onBeat)==null||a.call(this);r.push(.84-.62*this.pleth.sample(R,this.perfusion,this.input.rr)),n.push(P(this.capno.sample(R),this.scale))}(c=this.traces.ecg)==null||c.draw(t),(u=this.traces.pleth)==null||u.draw(r),(p=this.traces.capno)==null||p.draw(n)}};function P(l,e){return .86-.72*(l/e)}return j(G);})();
+// </monitor-engine>
+const ECG_OK='#10b981', ECG_ALARM='#ef4444';
+let monitor=null;
+function startMonitor(){
+  stopMonitor();
+  monitor=new MediSimMonitor.MonitorEngine();
+  monitor.attach('ecg',$('ecg'),ECG_OK,2);
+  monitor.attach('pleth',$('pleth'),'#60a5fa',1.75);
+  monitor.attach('capno',$('capno'),'#e2e8f0',1.75);
+  feedMonitor();
+  monitor.start();
+}
+function stopMonitor(){ if(monitor){ monitor.dispose(); monitor=null; } }
+function feedMonitor(){
+  if(!monitor) return;
+  const v=S.shown;
+  monitor.setInput({hr:v.hr, rr:v.rr, o2:v.o2, bpSystolic:v.bpSystolic, bpDiastolic:v.bpDiastolic,
+    rhythm:S.vitals.rhythm, etco2:v.etco2, capnogram:S.vitals.capnogram});
+  const color = v.hr>120||v.hr<50 ? ECG_ALARM : ECG_OK;
+  monitor.setColor('ecg',color);
+  if($('ecg')) $('ecg').style.filter='drop-shadow(0 0 5px '+color+')';
 }
 
 // ===================== VITALS DRIFT =====================
@@ -713,12 +697,15 @@ function startDrift(){
     const ease=(c,t,step)=>Math.abs(c-t)<step?t:c+(c<t?step:-step);
     hr=ease(hr,tgt.hr,1); s=ease(s,tgt.bpSystolic,1); d=ease(d,tgt.bpDiastolic,1);
     o2=ease(o2,tgt.o2,0.5); rr=ease(rr,tgt.rr,0.5); temp=ease(temp,tgt.temp,0.1);
-    if(S.trend==='worsening'){ hr=Math.min(160,hr+0.3); s=Math.max(60,s-0.2); o2=Math.max(80,o2-0.1); }
-    if(S.trend==='critical'){ hr=Math.min(180,hr+0.8); s=Math.max(45,s-0.8); o2=Math.max(60,o2-0.3); }
+    // Drift only while there is something to drift: a rate or pressure of zero (arrest) stays zero.
+    if(S.trend==='worsening'){ if(hr>0&&hr<160)hr+=0.3; if(s>60)s-=0.2; if(o2>80)o2-=0.1; }
+    if(S.trend==='critical'){ if(hr>0&&hr<180)hr+=0.8; if(s>45)s-=0.8; if(o2>60)o2-=0.3; }
+    const co2=tgt.etco2;
     S.shown={
       hr:Math.round(j(hr,.6)), bpSystolic:Math.round(j(s,.6)), bpDiastolic:Math.round(j(d,.5)),
       o2:Math.min(100,Math.round(j(o2,.2))), rr:Math.round(j(rr,.3)),
-      temp:parseFloat(j(temp,.02).toFixed(1)), rhythm:S.vitals.rhythm
+      temp:parseFloat(j(temp,.02).toFixed(1)), rhythm:S.vitals.rhythm,
+      etco2: typeof co2==='number' && co2>0 ? Math.max(1,Math.round(j(co2,1.2))) : co2
     };
     paintVitals();
   },1000);
@@ -726,11 +713,18 @@ function startDrift(){
 function paintVitals(){
   const v=S.shown; if(!$('v_hr')) return;
   const hrCrit=v.hr>120||v.hr<50, o2Crit=v.o2<92, bpCrit=v.bpSystolic<90||v.bpSystolic>180;
-  $('v_hr').textContent=v.hr; $('v_hr').className='text-3xl font-black mono '+(hrCrit?'text-red-500':'text-emerald-500');
-  $('v_bp').textContent=v.bpSystolic+'/'+v.bpDiastolic; $('v_bp').className='text-3xl font-black mono '+(bpCrit?'text-red-500':'text-yellow-400');
-  $('v_o2').textContent=v.o2; $('v_o2').className='text-3xl font-black mono '+(o2Crit?'text-red-500':'text-blue-400');
-  $('v_rr').textContent=v.rr;
-  $('v_temp').textContent=v.temp+'°C';
+  const BIG='text-xl md:text-3xl font-black mono ';
+  $('v_hr').textContent=v.hr; $('v_hr').className=BIG+(hrCrit?'text-red-500':'text-emerald-500');
+  $('v_bp').textContent=v.bpSystolic+'/'+v.bpDiastolic; $('v_bp').className=BIG+(bpCrit?'text-red-500':'text-yellow-400');
+  $('v_o2').textContent=v.o2; $('v_o2').className=BIG+(o2Crit?'text-red-500':'text-blue-400');
+  $('v_rr').textContent=v.rr; $('v_rr').className=BIG+'text-cyan-400';
+  const hasCo2=typeof v.etco2==='number'&&isFinite(v.etco2);
+  $('v_etco2').textContent=hasCo2?v.etco2:'--';
+  $('v_etco2').className=BIG+(hasCo2&&(v.etco2<25||v.etco2>50)?'text-red-500':'text-slate-200');
+  $('v_temp').textContent=v.temp; $('v_temp').className=BIG+'text-orange-300';
+  // 40 mmHg reference line on the capnogram
+  $('co2_40').style.top=(MediSimMonitor.capnoY(40,MediSimMonitor.capnoScale(v.etco2))*100)+'%';
+  feedMonitor();
   $('v_rhythm').textContent=v.rhythm;
   $('v_rhythm').className='text-[10px] font-black uppercase tracking-widest mono '+(hrCrit?'text-red-500':'text-emerald-500');
   const trendEl=$('v_trend');
@@ -812,21 +806,33 @@ function renderPlay(){
   <!-- monitor -->
   <div class="bg-[#0f172a]/90 border-b border-slate-800 p-3 md:p-4 shrink-0">
     <div class="max-w-[1500px] mx-auto grid grid-cols-1 md:grid-cols-12 gap-3 md:gap-5">
-      <div class="md:col-span-4 bg-black border border-slate-700/50 rounded-xl h-[90px] md:h-[120px] relative overflow-hidden">
-        <div class="absolute top-2 left-3 z-10"><span class="text-[9px] font-black text-emerald-500/50 uppercase tracking-[.3em]">Lead II</span></div>
-        <canvas id="ecg" class="w-full h-full"></canvas>
-        <div id="v_trend" class="absolute top-2 right-3"></div>
+      <div class="md:col-span-5 bg-black border border-slate-700/50 rounded-xl h-[132px] md:h-auto md:min-h-[168px] relative overflow-hidden flex flex-col">
+        <div class="relative flex-[9] min-h-0">
+          <span class="absolute top-1 left-2.5 z-10 text-[8px] md:text-[9px] font-black text-emerald-500/50 uppercase tracking-[.3em]">Lead II</span>
+          <canvas id="ecg" class="absolute inset-0 w-full h-full"></canvas>
+        </div>
+        <div class="relative flex-[5] min-h-0 border-t border-white/[0.06]">
+          <span class="absolute top-1 left-2.5 z-10 text-[8px] md:text-[9px] font-black text-blue-400/50 uppercase tracking-[.3em]">Pleth</span>
+          <canvas id="pleth" class="absolute inset-0 w-full h-full" style="filter:drop-shadow(0 0 5px #60a5fa)"></canvas>
+        </div>
+        <div class="relative flex-[5] min-h-0 border-t border-white/[0.06]">
+          <span class="absolute top-1 left-2.5 z-10 text-[8px] md:text-[9px] font-black text-slate-300/50 uppercase tracking-[.3em]">CO₂</span>
+          <div id="co2_40" class="absolute inset-x-0 border-t border-dashed border-white/10 pointer-events-none"><span class="absolute right-1.5 -top-[9px] text-[7px] mono text-slate-600">40</span></div>
+          <canvas id="capno" class="absolute inset-0 w-full h-full" style="filter:drop-shadow(0 0 5px rgba(226,232,240,.6))"></canvas>
+        </div>
       </div>
-      <div class="md:col-span-8 grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+      <div class="md:col-span-7 grid grid-cols-3 gap-2 md:gap-4">
         ${vbox('Heart Rate','v_hr','bpm')}
         ${vbox('Blood Pressure','v_bp','mmHg')}
         ${vbox('SpO₂','v_o2','%')}
         ${vbox('Resp Rate','v_rr','/min')}
+        ${vbox('EtCO₂','v_etco2','mmHg')}
+        ${vbox('Temp','v_temp','°C')}
       </div>
     </div>
-    <div class="max-w-[1500px] mx-auto flex justify-between items-center mt-2 px-1">
-      <span class="text-[9px] text-slate-600 font-black uppercase tracking-widest">Temp: <span id="v_temp" class="text-slate-400"></span></span>
-      <span class="text-[9px] text-slate-600 font-black uppercase tracking-widest">Rhythm: <span id="v_rhythm"></span></span>
+    <div class="max-w-[1500px] mx-auto flex justify-between items-center gap-3 mt-2 px-1">
+      <div id="v_trend"></div>
+      <span class="text-[9px] text-slate-600 font-black uppercase tracking-widest truncate">Rhythm: <span id="v_rhythm"></span></span>
     </div>
   </div>
   <!-- workspace tabs -->
@@ -841,7 +847,7 @@ function renderPlay(){
       <div id="ws"></div>
     </aside>
   </div>`;
-  startECG($('ecg')); startDrift(); paintVitals();
+  startMonitor(); startDrift(); paintVitals();
   renderTabs(); renderView(); renderWorkspace();
 }
 
@@ -1187,9 +1193,9 @@ function renderChartView(){
 }
 
 function vbox(label,id,unit){
-  return `<div class="bg-slate-900/40 border border-slate-800/50 rounded-2xl p-2 md:p-3 flex flex-col justify-between">
+  return `<div class="bg-slate-900/40 border border-slate-800/50 rounded-xl md:rounded-2xl p-2 md:p-3 flex flex-col justify-between min-w-0">
     <span class="text-[8px] md:text-[10px] font-black uppercase tracking-widest text-slate-500">${label}</span>
-    <div class="flex items-baseline gap-1 mt-1"><span id="${id}" class="text-3xl font-black mono text-emerald-500">--</span><span class="text-[9px] text-slate-600 font-bold uppercase">${unit}</span></div>
+    <div class="flex items-baseline gap-1 mt-1"><span id="${id}" class="text-xl md:text-3xl font-black mono text-emerald-500">--</span><span class="text-[9px] text-slate-600 font-bold uppercase">${unit}</span></div>
   </div>`;
 }
 function renderChat(){
@@ -1231,7 +1237,7 @@ function actionReviewSec(list){
 }
 function renderDebrief(){
   const d=S.debrief||{}; const score=Math.round(d.score||0);
-  clearInterval(driftTimer); cancelAnimationFrame(ecgRAF);
+  clearInterval(driftTimer); stopMonitor();
   const ev=Array.isArray(d.criticalEvents)?d.criticalEvents:[];
   main.innerHTML=`
   <div class="flex-1 overflow-y-auto p-6">
@@ -1460,7 +1466,7 @@ $('detectBtn').onclick=()=>{ saveSettingsForm(); testConnection(false); };
 $('testBtn').onclick=()=>{ saveSettingsForm(); testConnection(false); };
 $('ttsBtn').onclick=()=>{ S.tts=!S.tts; localStorage.setItem('ms_tts',S.tts?'1':'0'); if(!S.tts&&'speechSynthesis'in window) speechSynthesis.cancel();
   $('ttsBtn').className='p-2.5 rounded-xl border transition '+(S.tts?'bg-emerald-500/10 border-emerald-500/40 text-emerald-400':'bg-slate-900 border-slate-800 text-slate-500'); };
-$('resetBtn').onclick=()=>{ if('speechSynthesis'in window)speechSynthesis.cancel(); clearInterval(driftTimer); cancelAnimationFrame(ecgRAF); renderSetup(); };
+$('resetBtn').onclick=()=>{ if('speechSynthesis'in window)speechSynthesis.cancel(); clearInterval(driftTimer); stopMonitor(); renderSetup(); };
 
 // init
 setConn('unchecked');

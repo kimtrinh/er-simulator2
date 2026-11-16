@@ -22,18 +22,39 @@ function ensureArray(val: any): any[] {
   return [val];
 }
 
+// The descriptions steer what the bedside monitor draws (components/monitor): the ECG strip is
+// built from "rhythm", the pleth from the blood pressure, and the capnogram from rr + etco2.
 const VITALS_SCHEMA = {
   type: "object",
   properties: {
-    hr: { type: "number" },
+    hr: {
+      type: "number",
+      description:
+        "Heart rate the monitor counts from the ECG. Keep the electrical rate during PEA; 0 only in asystole or ventricular fibrillation.",
+    },
     bpSystolic: { type: "number" },
     bpDiastolic: { type: "number" },
-    rr: { type: "number" },
+    rr: { type: "number", description: "Respiratory rate; 0 when apnoeic." },
     o2: { type: "number" },
     temp: { type: "number" },
-    rhythm: { type: "string" },
+    rhythm: {
+      type: "string",
+      description:
+        "The rhythm on the monitor right now, in standard terms, e.g. Sinus tachycardia, Atrial fibrillation with RVR, Atrial flutter 2:1, SVT, Junctional rhythm, First-degree AV block, Mobitz I, Mobitz II, Complete heart block, Ventricular tachycardia, Torsades de pointes, Ventricular fibrillation, PEA, Asystole, Paced rhythm. Add what the strip shows when it matters: ST elevation, ST depression, peaked T waves, wide QRS, prolonged QT, PVCs. Name only the current rhythm, not the previous one.",
+    },
+    etco2: {
+      type: "number",
+      description:
+        "End-tidal CO2 in mmHg on the monitor's waveform capnography (normal 35-45). It follows ventilation and perfusion: high with hypoventilation, low with hyperventilation or poor cardiac output, about 10-20 during CPR with an abrupt rise at ROSC, and 0 when apnoeic or the tube is not in the trachea.",
+    },
+    capnogram: {
+      type: "string",
+      enum: ["normal", "obstructive"],
+      description:
+        'Capnogram shape: "obstructive" (shark-fin upslope) with bronchospasm or airway obstruction, otherwise "normal".',
+    },
   },
-  required: ["hr", "bpSystolic", "bpDiastolic", "rr", "o2", "temp", "rhythm"],
+  required: ["hr", "bpSystolic", "bpDiastolic", "rr", "o2", "temp", "rhythm", "etco2", "capnogram"],
   additionalProperties: false,
 };
 
@@ -299,7 +320,7 @@ STRICT RULES:
 1. PHYSICAL EXAM: when the player examines the patient, return findings as a "physicalExam" array of { "system", "finding" }.
 2. RADIOLOGY/IMAGING: return a detailed technical report in the "diagnosticReports" array { "title", "body" }.
 3. LABS: return structured values in "labResults" { "name", "value", "unit", "flag" } where flag is "H", "L", "CRITICAL", or "".
-4. Update "updatedVitals" (all of hr, bpSystolic, bpDiastolic, rr, o2, temp, rhythm) and "vitalTrend" based on physiology and the player's actions.
+4. Update "updatedVitals" (all of hr, bpSystolic, bpDiastolic, rr, o2, temp, rhythm, etco2, capnogram) and "vitalTrend" based on physiology and the player's actions.
 5. "clinicalRationale" explains WHY vitals/findings changed, grounded in pathophysiology.
 6. Only return labs/imaging/exam findings the player actually ordered or performed this turn. Do not volunteer the diagnosis.
 7. DIFFERENTIAL: the player may carry several working diagnoses at once and may document or revise

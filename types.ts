@@ -11,6 +11,10 @@ export interface Vitals {
   o2: number;
   temp: number;
   rhythm: string;
+  /** End-tidal CO2 in mmHg. Absent on cases saved before capnography was added. */
+  etco2?: number;
+  /** Capnogram shape; "obstructive" is the shark fin of bronchospasm. */
+  capnogram?: 'normal' | 'obstructive';
 }
 
 export interface Message {

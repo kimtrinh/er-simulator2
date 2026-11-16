@@ -7,7 +7,7 @@ The clinical engine runs on **Gemini** (free tier) or **Claude** (Anthropic API)
 ## Features
 
 - **Two ways to start a case** — type a medical topic ("Diabetic Ketoacidosis") or upload clinical records (PDF / images).
-- **Live vitals monitor** — animated ECG waveform, HR / BP / RR / O₂ / temp with physiologic drift, and a stable → critical trend engine.
+- **Live vitals monitor** — three sweeping traces (ECG, pleth, capnogram) beside HR / BP / SpO₂ / RR / EtCO₂ / temp, with physiologic drift and a stable → critical trend engine. The ECG is drawn from the rhythm the engine reports: sinus, AF, flutter, SVT, junctional, the AV blocks, VT, torsades, VF, PEA, asystole, paced and more, plus ST elevation or depression, peaked T waves, wide QRS, long QT and ectopy. The pleth pulses with each perfusing beat and goes flat without a pulse; the capnogram follows the respiratory rate and EtCO₂ and turns shark-fin with bronchospasm. The beep, when on, sounds with each QRS.
 - **Three training levels** — pick Medical Student, Resident, or Attending before the case. The level changes how the case is written (classic vs. undifferentiated), how much the team gives away at the bedside (the nurse prompts you vs. consultants pushing back), whether critical actions are suggested up front, and how strictly the debrief is marked.
 - **Four-tab workspace** — Sim Room, Orders, Diagnosis, and Chart sit under the always-visible monitor, so you can jump from order entry back to the bedside in one click.
 - **Clickable order catalogue** — every bedside action is an order you can search and click, including the time-critical ones: pelvic binder, arterial tourniquet, wound packing, needle decompression, massive transfusion, TXA, REBOA, thoracotomy, cricothyrotomy. Batch them into a signed order set or fire one STAT. The engine also names the critical actions this particular patient needs and surfaces them as suggestions.
@@ -56,10 +56,19 @@ Browser (React + Vite)
 - `server/simEngine.ts` — builds the prompts and JSON schemas for case setup, each bedside turn (including interpreting free-text orders), the tutor, and the full-case grading.
 - `server/llm.ts` — the one place that calls a model: Claude with structured outputs, or Gemini in JSON mode. It decides whose key each request may use: the player's own key from the request headers, or the server's key only when the request carries `OWNER_ACCESS_CODE`; anything else is refused with 401.
 - `services/geminiService.ts` — the browser's thin client for those endpoints.
+- `components/monitor/` — the monitor's waveform engine, free of React: `rhythm.ts` reads the engine's rhythm text, `synth.ts` generates the ECG, pleth and capnogram on simulated time (so the rate is right at any screen refresh rate), and `engine.ts` sweeps them onto canvases. `components/TelemetryWaveform.tsx` wraps it for the app.
 - `data/orderCatalog.ts` — the bedside order catalogue: every clickable order, which ones count as critical actions, and the matching used to file free-text orders into the chart.
 - `data/trainingLevels.ts` — the three training levels and the prompt fragments that pitch the case, the bedside, and the marking at each.
 - History is stored in `localStorage`; there is no external database or sign-in.
-- `medisim-er-local.html` is a standalone single-file edition that runs against your own model in LM Studio / Ollama, or with your own Gemini / Claude key pasted into its settings. It mirrors the same workspace, order catalogue, differential, tutor, and grading.
+- `medisim-er-local.html` is a standalone single-file edition that runs against your own model in LM Studio / Ollama, or with your own Gemini / Claude key pasted into its settings. It mirrors the same workspace, monitor, order catalogue, differential, tutor, and grading. Its monitor engine is a bundled copy of `components/monitor/`: after changing anything there, run `npm run sync:local` to refresh it.
+
+## Tests
+
+```bash
+npm test
+```
+
+Covers the monitor: how rhythm text is read, that each trace runs at the displayed rate whatever the screen refresh rate, and that the local edition's embedded engine is up to date.
 
 ## Notes
 
